@@ -9,7 +9,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 import streamlit.components.v1 as components
 
 # --- Setup ---
-st.set_page_config(page_title="Virtual360 Cost Assessment", layout="wide")
+st.set_page_config(page_title="SkyveGen | Virtual360", layout="wide")
 
 # --- AUTO-FOCUS JAVASCRIPT ---
 components.html(
@@ -33,7 +33,10 @@ if 'hotel_data' not in st.session_state:
 if 'last_category' not in st.session_state:
     st.session_state.last_category = "Suite/Room"
 
+# --- BRANDING HEADER ---
+st.markdown("<h3 style='text-align: left; color: #2E3B4E; margin-bottom: -10px;'>SkyveGen Pvt Ltd</h3>", unsafe_allow_html=True)
 st.title("🏨 Virtual360 Cost Assessment")
+st.markdown("---")
 
 # --- DATA ENTRY SECTION ---
 st.subheader("📍 Quick Data Entry")
@@ -95,18 +98,16 @@ if not st.session_state.hotel_data.empty:
         st.markdown("### 📥 Export Report")
         e1, _ = st.columns([1, 3])
         
-        # --- BRANDED PDF GENERATION ---
         def generate_pdf(df):
             buf = io.BytesIO()
             doc = SimpleDocTemplate(buf, pagesize=letter)
             styles = getSampleStyleSheet()
             
-            # Custom Branding Elements
+            # Branded Header for PDF
             title = Paragraph("SkyveGen Pvt Ltd", styles['Title'])
             subtitle = Paragraph("Virtual360 Area Assessment Report", styles['Heading2'])
             timestamp = Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal'])
             
-            # Table setup
             data = [list(df.columns)] + df.values.tolist()
             table = Table(data)
             table.setStyle(TableStyle([
@@ -133,5 +134,3 @@ if not st.session_state.hotel_data.empty:
         if st.sidebar.button("🗑️ Clear All Data", use_container_width=True):
             st.session_state.hotel_data = pd.DataFrame(columns=st.session_state.hotel_data.columns)
             st.rerun()
-    else:
-        st.warning("No data matches the selected filters.")
