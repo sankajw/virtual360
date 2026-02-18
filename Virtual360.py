@@ -30,7 +30,6 @@ if 'hotel_data' not in st.session_state:
         "Date Added", "Hotel Name", "Name of Area", "Category", "Coverage (SQM)"
     ])
 
-# Set a default category if it doesn't exist
 if 'last_category' not in st.session_state:
     st.session_state.last_category = "Suite/Room"
 
@@ -39,31 +38,29 @@ st.title("🏨 Virtual360 Cost Assessment")
 # --- SINGLE ROW DATA ENTRY SECTION ---
 st.subheader("📍 Quick Data Entry")
 
-# Using a standard container instead of form clear_on_submit 
-# so we can manually control the "Memory" of the Category field.
-with st.container():
+# We use clear_on_submit=True to reset the Name and SQM fields safely.
+with st.form("entry_form", clear_on_submit=True):
     f1, f2, f3, f4, f5 = st.columns([1.5, 2.5, 2, 1, 1])
     
     with f1:
         hotel_choice = st.selectbox("Hotel Name", ["EDEN Hotel", "Thaala Hotel"])
     with f2:
-        # We use a key that we can clear manually
-        area_name = st.text_input("Name of Area", key="input_area")
+        area_name = st.text_input("Name of Area")
     with f3:
-        # This field recalls the last used category
         categories = ["Suite/Room", "Restaurant & Bar", "Lobby", "Function Venue", "Outdoor", "Gym", "Other"]
-        default_index = categories.index(st.session_state.last_category)
-        category = st.selectbox("Category", categories, index=default_index)
+        # Determine the index based on the saved last_category
+        try:
+            d_idx = categories.index(st.session_state.last_category)
+        except ValueError:
+            d_idx = 0
+        category = st.selectbox("Category", categories, index=d_idx)
     with f4:
-        # SQM input
-        sqm = st.number_input("SQM", min_value=0.0, step=1.0, key="input_sqm")
+        sqm = st.number_input("SQM", min_value=0.0, step=1.0)
     with f5:
         st.write(" ") 
-        # Using a regular button to allow manual state management
-        submit = st.button("➕ Add", use_container_width=True)
+        submit = st.form_submit_button("➕ Add")
 
-    # Logic to trigger on Button Click OR Enter Key (Enter key works on number_input by default)
-    if submit or (st.session_state.input_sqm > 0 and area_name != "" and st.session_state.get('prev_sqm') != st.session_state.input_sqm):
+    if submit:
         if area_name and sqm > 0:
             new_entry = pd.DataFrame({
                 "Date Added": [datetime.now().strftime("%Y-%m-%d")],
@@ -74,14 +71,11 @@ with st.container():
             })
             st.session_state.hotel_data = pd.concat([st.session_state.hotel_data, new_entry], ignore_index=True)
             
-            # Update the Memory
+            # Update the Memory safely
             st.session_state.last_category = category
-            
-            # Clear the text and number fields for next entry
-            st.session_state.input_area = ""
-            st.session_state.input_sqm = 0.0
-            
-            st.rerun()
+            st.rerun() 
+        else:
+            st.error("Missing Area Name or SQM")
 
 # --- UNDO LAST ENTRY ---
 if not st.session_state.hotel_data.empty:
