@@ -78,7 +78,6 @@ hotel_filter = st.sidebar.multiselect("Filter View", ["EDEN Hotel", "Thaala Hote
 if not st.session_state.hotel_data.empty:
     st.subheader("📊 Assessment Inventory")
     
-    # Capture the state of the editor
     edited_df = st.data_editor(
         st.session_state.hotel_data, 
         num_rows="dynamic", 
@@ -86,50 +85,52 @@ if not st.session_state.hotel_data.empty:
         key="main_editor"
     )
     
-    # Update master state if changes occur
     if not edited_df.equals(st.session_state.hotel_data):
         st.session_state.hotel_data = edited_df
         st.rerun()
 
-    # Create the dataframe for export based on sidebar filters
     export_df = edited_df[edited_df["Hotel Name"].isin(hotel_filter)]
 
     if not export_df.empty:
-        st.markdown("### 📥 Download Assessment")
-        e1, e2, e3, e4 = st.columns(4)
+        st.markdown("### 📥 Export Report")
+        e1, _ = st.columns([1, 3])
         
-        # 1. EXCEL 
-        try:
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                export_df.to_excel(writer, index=False, sheet_name='Assessment')
-            e1.download_button("📥 Excel", buffer.getvalue(), "assessment.xlsx", use_container_width=True)
-        except Exception as e:
-            e1.error("Excel engine loading...")
-
-        # 2. CSV
-        e2.download_button("📥 CSV", export_df.to_csv(index=False).encode('utf-8'), "assessment.csv", use_container_width=True)
-        
-        # 3. PDF
+        # --- BRANDED PDF GENERATION ---
         def generate_pdf(df):
             buf = io.BytesIO()
             doc = SimpleDocTemplate(buf, pagesize=letter)
-            # Use current columns from the dataframe
+            styles = getSampleStyleSheet()
+            
+            # Custom Branding Elements
+            title = Paragraph("SkyveGen Pvt Ltd", styles['Title'])
+            subtitle = Paragraph("Virtual360 Area Assessment Report", styles['Heading2'])
+            timestamp = Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal'])
+            
+            # Table setup
             data = [list(df.columns)] + df.values.tolist()
             table = Table(data)
             table.setStyle(TableStyle([
-                ('BACKGROUND',(0,0),(-1,0),colors.grey), 
+                ('BACKGROUND',(0,0),(-1,0),colors.HexColor("#2E3B4E")), 
                 ('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke), 
-                ('GRID',(0,0),(-1,-1),1,colors.black),
-                ('FONTSIZE', (0,0), (-1,-1), 9)
+                ('GRID',(0,0),(-1,-1),0.5,colors.grey),
+                ('FONTSIZE', (0,0), (-1,-1), 10),
+                ('BOTTOMPADDING', (0,0), (-1,0), 10),
             ]))
-            doc.build([table])
+            
+            elements = [title, subtitle, timestamp, Spacer(1, 20), table]
+            doc.build(elements)
             return buf.getvalue()
 
-        e3.download_button("📥 PDF", generate_pdf(export_df), "assessment_report.pdf", use_container_width=True)
+        with e1:
+            st.download_button(
+                label="📥 Download PDF Report",
+                data=generate_pdf(export_df),
+                file_name=f"SkyveGen_Assessment_{datetime.now().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
         
-        # 4. RESET
-        if e4.button("🗑️ Clear All", use_container_width=True):
+        if st.sidebar.button("🗑️ Clear All Data", use_container_width=True):
             st.session_state.hotel_data = pd.DataFrame(columns=st.session_state.hotel_data.columns)
             st.rerun()
     else:
