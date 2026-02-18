@@ -74,12 +74,11 @@ st.markdown("---")
 
 # --- VIEWING GRID & EXPORTS ---
 hotel_filter = st.sidebar.multiselect("Filter View", ["EDEN Hotel", "Thaala Hotel"], default=["EDEN Hotel", "Thaala Hotel"])
-filtered_df = st.session_state.hotel_data[st.session_state.hotel_data["Hotel Name"].isin(hotel_filter)]
 
-if not filtered_df.empty:
+if not st.session_state.hotel_data.empty:
     st.subheader("📊 Assessment Inventory")
     
-    # We use edited_df to ensure downloads capture changes made in the grid
+    # Capture the state of the editor
     edited_df = st.data_editor(
         st.session_state.hotel_data, 
         num_rows="dynamic", 
@@ -87,44 +86,51 @@ if not filtered_df.empty:
         key="main_editor"
     )
     
-    # Update master state if rows are deleted/edited in grid
+    # Update master state if changes occur
     if not edited_df.equals(st.session_state.hotel_data):
         st.session_state.hotel_data = edited_df
         st.rerun()
 
-    # Re-filter after potential grid edits
+    # Create the dataframe for export based on sidebar filters
     export_df = edited_df[edited_df["Hotel Name"].isin(hotel_filter)]
 
-    st.markdown("### 📥 Download Assessment")
-    e1, e2, e3, e4 = st.columns(4)
-    
-    # 1. EXCEL (Matches screen content)
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        export_df.to_excel(writer, index=False, sheet_name='Assessment')
-    e1.download_button("📥 Excel", buffer.getvalue(), "assessment.xlsx", use_container_width=True)
+    if not export_df.empty:
+        st.markdown("### 📥 Download Assessment")
+        e1, e2, e3, e4 = st.columns(4)
+        
+        # 1. EXCEL 
+        try:
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                export_df.to_excel(writer, index=False, sheet_name='Assessment')
+            e1.download_button("📥 Excel", buffer.getvalue(), "assessment.xlsx", use_container_width=True)
+        except Exception as e:
+            e1.error("Excel engine loading...")
 
-    # 2. CSV (Matches screen content)
-    e2.download_button("📥 CSV", export_df.to_csv(index=False).encode('utf-8'), "assessment.csv", use_container_width=True)
-    
-    # 3. PDF (Matches screen content)
-    def generate_pdf(df):
-        buf = io.BytesIO()
-        doc = SimpleDocTemplate(buf, pagesize=letter)
-        data = [list(df.columns)] + df.values.tolist()
-        table = Table(data)
-        table.setStyle(TableStyle([
-            ('BACKGROUND',(0,0),(-1,0),colors.grey), 
-            ('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke), 
-            ('GRID',(0,0),(-1,-1),1,colors.black),
-            ('FONTSIZE', (0,0), (-1,-1), 9)
-        ]))
-        doc.build([table])
-        return buf.getvalue()
+        # 2. CSV
+        e2.download_button("📥 CSV", export_df.to_csv(index=False).encode('utf-8'), "assessment.csv", use_container_width=True)
+        
+        # 3. PDF
+        def generate_pdf(df):
+            buf = io.BytesIO()
+            doc = SimpleDocTemplate(buf, pagesize=letter)
+            # Use current columns from the dataframe
+            data = [list(df.columns)] + df.values.tolist()
+            table = Table(data)
+            table.setStyle(TableStyle([
+                ('BACKGROUND',(0,0),(-1,0),colors.grey), 
+                ('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke), 
+                ('GRID',(0,0),(-1,-1),1,colors.black),
+                ('FONTSIZE', (0,0), (-1,-1), 9)
+            ]))
+            doc.build([table])
+            return buf.getvalue()
 
-    e3.download_button("📥 PDF", generate_pdf(export_df), "assessment_report.pdf", use_container_width=True)
-    
-    # 4. RESET
-    if e4.button("🗑️ Clear All", use_container_width=True):
-        st.session_state.hotel_data = pd.DataFrame(columns=st.session_state.hotel_data.columns)
-        st.rerun()
+        e3.download_button("📥 PDF", generate_pdf(export_df), "assessment_report.pdf", use_container_width=True)
+        
+        # 4. RESET
+        if e4.button("🗑️ Clear All", use_container_width=True):
+            st.session_state.hotel_data = pd.DataFrame(columns=st.session_state.hotel_data.columns)
+            st.rerun()
+    else:
+        st.warning("No data matches the selected filters.")
