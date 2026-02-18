@@ -118,7 +118,10 @@ if not st.session_state.hotel_data.empty:
                 ('BOTTOMPADDING', (0,0), (-1,0), 10),
             ]))
             
-            elements = [title, subtitle, timestamp, Spacer(1, 20), table]
+            # PDF Copyright Footer
+            pdf_copyright = Paragraph(f"<br/><br/>© {datetime.now().year} SkyveGen Pvt Ltd. All rights reserved.", styles['Normal'])
+            
+            elements = [title, subtitle, timestamp, Spacer(1, 20), table, pdf_copyright]
             doc.build(elements)
             return buf.getvalue()
 
@@ -134,3 +137,14 @@ if not st.session_state.hotel_data.empty:
         if st.sidebar.button("🗑️ Clear All Data", use_container_width=True):
             st.session_state.hotel_data = pd.DataFrame(columns=st.session_state.hotel_data.columns)
             st.rerun()
+    else:
+        st.warning("No data matches the selected filters.")
+
+# --- APP FOOTER (Copyright) ---
+st.markdown("---")
+footer_html = f"""
+    <div style='text-align: center; color: #888; font-size: 0.8rem; padding: 20px;'>
+        © {datetime.now().year} SkyveGen Pvt Ltd. All rights reserved.
+    </div>
+"""
+st.markdown(footer_html, unsafe_allow_html=True)
