@@ -24,36 +24,46 @@ components.html(
     height=0,
 )
 
-# --- Initialize Data Store ---
+# --- Initialize Data Store & Category Memory ---
 if 'hotel_data' not in st.session_state:
     st.session_state.hotel_data = pd.DataFrame(columns=[
         "Date Added", "Hotel Name", "Name of Area", "Category", "Coverage (SQM)"
     ])
 
+# Set a default category if it doesn't exist
+if 'last_category' not in st.session_state:
+    st.session_state.last_category = "Suite/Room"
+
 st.title("🏨 Virtual360 Cost Assessment")
 
-# --- DATA ENTRY SECTION ---
+# --- SINGLE ROW DATA ENTRY SECTION ---
 st.subheader("📍 Quick Data Entry")
 
-c1, c2, c3 = st.columns([1.5, 2, 1.5])
+# Using a standard container instead of form clear_on_submit 
+# so we can manually control the "Memory" of the Category field.
+with st.container():
+    f1, f2, f3, f4, f5 = st.columns([1.5, 2.5, 2, 1, 1])
+    
+    with f1:
+        hotel_choice = st.selectbox("Hotel Name", ["EDEN Hotel", "Thaala Hotel"])
+    with f2:
+        # We use a key that we can clear manually
+        area_name = st.text_input("Name of Area", key="input_area")
+    with f3:
+        # This field recalls the last used category
+        categories = ["Suite/Room", "Restaurant & Bar", "Lobby", "Function Venue", "Outdoor", "Gym", "Other"]
+        default_index = categories.index(st.session_state.last_category)
+        category = st.selectbox("Category", categories, index=default_index)
+    with f4:
+        # SQM input
+        sqm = st.number_input("SQM", min_value=0.0, step=1.0, key="input_sqm")
+    with f5:
+        st.write(" ") 
+        # Using a regular button to allow manual state management
+        submit = st.button("➕ Add", use_container_width=True)
 
-with c1:
-    hotel_choice = st.selectbox("Hotel Name", ["EDEN Hotel", "Thaala Hotel"])
-with c2:
-    area_name = st.text_input("Name of Area", key="area_input")
-with c3:
-    category = st.selectbox("Category", ["Suite/Room", "Restaurant & Bar", "Lobby", "Function Venue", "Outdoor", "Gym", "Other"])
-
-# Form for SQM to capture the Enter key
-with st.form("sqm_submit_form", clear_on_submit=True):
-    sqm = st.number_input("Coverage (SQM)", min_value=0.0, step=1.0)
-    
-    col_submit, col_undo = st.columns([4, 1])
-    
-    with col_submit:
-        submit = st.form_submit_button("➕ Add to Assessment (Press Enter)", use_container_width=True)
-    
-    if submit:
+    # Logic to trigger on Button Click OR Enter Key (Enter key works on number_input by default)
+    if submit or (st.session_state.input_sqm > 0 and area_name != "" and st.session_state.get('prev_sqm') != st.session_state.input_sqm):
         if area_name and sqm > 0:
             new_entry = pd.DataFrame({
                 "Date Added": [datetime.now().strftime("%Y-%m-%d")],
@@ -63,55 +73,45 @@ with st.form("sqm_submit_form", clear_on_submit=True):
                 "Coverage (SQM)": [sqm]
             })
             st.session_state.hotel_data = pd.concat([st.session_state.hotel_data, new_entry], ignore_index=True)
-            st.rerun() 
-        else:
-            st.warning("Please ensure 'Name of Area' is filled and 'SQM' is greater than 0.")
+            
+            # Update the Memory
+            st.session_state.last_category = category
+            
+            # Clear the text and number fields for next entry
+            st.session_state.input_area = ""
+            st.session_state.input_sqm = 0.0
+            
+            st.rerun()
 
-# --- UNDO BUTTON (Placed outside the form for immediate action) ---
+# --- UNDO LAST ENTRY ---
 if not st.session_state.hotel_data.empty:
-    if st.button("↩️ Undo Last Entry", use_container_width=True):
+    if st.button("↩️ Undo Last Entry"):
         st.session_state.hotel_data = st.session_state.hotel_data.iloc[:-1]
         st.rerun()
 
 st.markdown("---")
 
-# --- DISPLAY & FILTERS ---
-hotel_filter = st.sidebar.multiselect("View Specific Hotel", ["EDEN Hotel", "Thaala Hotel"], default=["EDEN Hotel", "Thaala Hotel"])
+# --- VIEWING GRID & FILTERS ---
+hotel_filter = st.sidebar.multiselect("Filter View", ["EDEN Hotel", "Thaala Hotel"], default=["EDEN Hotel", "Thaala Hotel"])
 filtered_df = st.session_state.hotel_data[st.session_state.hotel_data["Hotel Name"].isin(hotel_filter)]
 
 if not filtered_df.empty:
-    m1, m2 = st.columns(2)
-    m1.metric("Total Area", f"{filtered_df['Coverage (SQM)'].sum():,.1f} SQM")
-    m2.metric("Items in Assessment", len(filtered_df))
-
     st.subheader("📊 Assessment Inventory")
     st.data_editor(filtered_df, num_rows="dynamic", use_container_width=True)
     
     e1, e2, e3 = st.columns(3)
+    e1.download_button("📥 Export CSV", filtered_df.to_csv(index=False), "assessment.csv", use_container_width=True)
     
-    # CSV Export
-    csv = filtered_df.to_csv(index=False).encode('utf-8')
-    e1.download_button("📥 Export CSV", csv, "area_assessment.csv", "text/csv", use_container_width=True)
-    
-    # PDF Export
     def generate_pdf(df):
         buf = io.BytesIO()
         doc = SimpleDocTemplate(buf, pagesize=letter)
-        styles = getSampleStyleSheet()
-        parts = [Paragraph("Virtual360 Area Assessment Report", styles['Title']), Spacer(1, 12)]
         data = [["Date", "Hotel", "Area", "Category", "SQM"]] + df.values.tolist()
         table = Table(data)
-        table.setStyle(TableStyle([
-            ('BACKGROUND',(0,0),(-1,0),colors.grey), 
-            ('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke), 
-            ('GRID',(0,0),(-1,-1),1,colors.black)
-        ]))
-        parts.append(table)
-        doc.build(parts)
+        table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.grey), ('GRID',(0,0),(-1,-1),1,colors.black)]))
+        doc.build([table])
         return buf.getvalue()
 
-    pdf = generate_pdf(filtered_df)
-    e2.download_button("📥 Export PDF", pdf, "area_report.pdf", "application/pdf", use_container_width=True)
+    e2.download_button("📥 Export PDF", generate_pdf(filtered_df), "report.pdf", use_container_width=True)
     
     if e3.button("🗑️ Clear All", use_container_width=True):
         st.session_state.hotel_data = pd.DataFrame(columns=st.session_state.hotel_data.columns)
