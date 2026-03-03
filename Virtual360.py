@@ -890,166 +890,145 @@ def show_assessment():
 
 # ─────────────────────────────────────────────
 # ─────────────────────────────────────────────
-# ICON RAIL NAV + TOP-RIGHT USER BADGE
+# NAV RAIL  (Streamlit sidebar styled as icon rail)
 # ─────────────────────────────────────────────
 
-NAV_PANEL_JS = """
-<script>
-(function() {
-    var doc = window.parent.document;
+RAIL_CSS = """
+<style>
+/* Shrink sidebar to icon-width */
+[data-testid="stSidebar"] {
+    min-width: 64px !important;
+    max-width: 64px !important;
+    background: #1a2535 !important;
+}
+[data-testid="stSidebar"] > div:first-child {
+    padding: 0.5rem 0 !important;
+    width: 64px !important;
+}
+/* Hide sidebar collapse arrow */
+[data-testid="collapsedControl"] { display: none !important; }
 
-    // Clean up previous elements on re-run
-    ["__np_style","__np_rail","__np_topbar"].forEach(function(id){
-        var el = doc.getElementById(id);
-        if (el) el.parentNode.removeChild(el);
-    });
+/* Style every button in sidebar as an icon button */
+[data-testid="stSidebar"] button {
+    width: 52px !important;
+    height: 52px !important;
+    margin: 2px auto !important;
+    padding: 0 !important;
+    border-radius: 10px !important;
+    border: none !important;
+    background: transparent !important;
+    color: #9ab0c8 !important;
+    font-size: 1.3rem !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+    transition: background .15s, color .15s !important;
+}
+[data-testid="stSidebar"] button:hover {
+    background: #243448 !important;
+    color: #fff !important;
+}
+[data-testid="stSidebar"] button[kind="primary"] {
+    background: #2563eb !important;
+    color: #fff !important;
+}
+[data-testid="stSidebar"] button[kind="primary"]:hover {
+    background: #1d50c8 !important;
+}
+/* Hide any text labels streamlit adds */
+[data-testid="stSidebar"] .stButton p { display: none !important; }
+/* Hide markdown / other noise */
+[data-testid="stSidebar"] hr { border-color: #2e3f52 !important; margin: 4px 6px !important; }
 
-    // ── Styles ──────────────────────────────────────────────────────
-    var style = doc.createElement("style");
-    style.id = "__np_style";
-    style.textContent =
-        "[data-testid='stSidebar'],[data-testid='collapsedControl']{display:none!important}" +
-        ".block-container{padding-top:3.2rem!important}" +
-        "[data-testid='stAppViewContainer']>section[data-testid='stMain']{margin-left:52px!important}" +
-        "#__np_rail{position:fixed;top:0;left:0;width:52px;height:100vh;background:#1a2535;" +
-          "display:flex;flex-direction:column;align-items:center;z-index:9999;overflow:hidden;" +
-          "transition:width .22s cubic-bezier(.4,0,.2,1);box-shadow:2px 0 14px rgba(0,0,0,.3)}" +
-        "#__np_rail:hover{width:210px}" +
-        ".np-logo-strip{width:100%;padding:13px 0 11px;display:flex;align-items:center;" +
-          "border-bottom:1px solid #2e3f52;min-height:52px;overflow:hidden;cursor:default}" +
-        ".np-logo-icon{min-width:52px;text-align:center;font-size:1.2rem;line-height:1}" +
-        ".np-logo-text{white-space:nowrap;color:#7ec8e3;font-size:.76rem;font-weight:700;" +
-          "opacity:0;transition:opacity .14s .04s}" +
-        "#__np_rail:hover .np-logo-text{opacity:1}" +
-        ".np-nav{flex:1;width:100%;padding:8px 0}" +
-        ".np-item{display:flex;align-items:center;width:100%;padding:11px 0;" +
-          "background:transparent;border:none;cursor:pointer;color:#9ab0c8;" +
-          "overflow:hidden;transition:background .14s,color .14s}" +
-        ".np-item:hover{background:#243448;color:#fff}" +
-        ".np-item.np-active{background:#2563eb;color:#fff}" +
-        ".np-item.np-active:hover{background:#1d50c8}" +
-        ".np-icon{min-width:52px;text-align:center;font-size:1.1rem;line-height:1;pointer-events:none}" +
-        ".np-label{white-space:nowrap;overflow:hidden;font-size:.87rem;font-weight:500;" +
-          "opacity:0;transition:opacity .1s .03s;pointer-events:none}" +
-        "#__np_rail:hover .np-label{opacity:1}" +
-        ".np-footer{width:100%;padding:8px 0 14px;border-top:1px solid #2e3f52}" +
-        ".np-logout{display:flex;align-items:center;width:100%;padding:11px 0;" +
-          "background:transparent;border:none;cursor:pointer;color:#e57373;" +
-          "overflow:hidden;transition:background .14s}" +
-        ".np-logout:hover{background:#c0392b;color:#fff}" +
-        "#__np_topbar{position:fixed;top:10px;right:16px;display:flex;align-items:center;" +
-          "gap:7px;z-index:9999}" +
-        ".np-avatar{width:32px;height:32px;border-radius:50%;background:#2563eb;" +
-          "display:flex;align-items:center;justify-content:center;color:#fff;" +
-          "font-weight:700;font-size:.88rem;box-shadow:0 2px 7px rgba(0,0,0,.25)}" +
-        ".np-userinfo{background:#1a2535;border:1px solid #2e3f52;border-radius:20px;" +
-          "padding:3px 12px 3px 8px;display:flex;align-items:center;gap:6px}" +
-        ".np-uname{color:#c9d8e8;font-size:.8rem;font-weight:600;white-space:nowrap}" +
-        ".np-urole{background:#2e4a66;color:#7ec8e3;border-radius:10px;padding:1px 7px;" +
-          "font-size:.68rem;font-weight:700;white-space:nowrap}";
-    doc.head.appendChild(style);
-
-    // ── Rail ─────────────────────────────────────────────────────────
-    var rail = doc.createElement("div");
-    rail.id = "__np_rail";
-    rail.innerHTML = NAV_DATA;
-    doc.body.appendChild(rail);
-
-    // ── Top bar ───────────────────────────────────────────────────────
-    var topbar = doc.createElement("div");
-    topbar.id = "__np_topbar";
-    topbar.innerHTML = TOPBAR_DATA;
-    doc.body.appendChild(topbar);
-
-    // ── Click handler via event delegation ───────────────────────────
-    // Use data-nav attribute on buttons — no inline onclick needed
-    rail.addEventListener("click", function(e) {
-        var btn = e.target;
-        // Walk up in case click landed on icon/label span
-        while (btn && btn !== rail) {
-            if (btn.dataset && btn.dataset.nav) break;
-            btn = btn.parentElement;
-        }
-        if (!btn || !btn.dataset || !btn.dataset.nav) return;
-
-        var action = btn.dataset.nav;
-        var url = new URL(doc.location.href);
-        url.searchParams.set("nav", action);
-        doc.location.href = url.toString();
-    });
-})();
-</script>
+/* Top-right user badge */
+#np-topbar {
+    position: fixed; top: 10px; right: 16px;
+    display: flex; align-items: center; gap: 7px;
+    z-index: 9999;
+    background: #1a2535;
+    border: 1px solid #2e3f52;
+    border-radius: 20px;
+    padding: 3px 12px 3px 8px;
+}
+.np-avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: #2563eb;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 700; font-size: .85rem;
+}
+.np-uname { color: #c9d8e8; font-size: .79rem; font-weight: 600; white-space: nowrap; }
+.np-urole {
+    background: #2e4a66; color: #7ec8e3;
+    border-radius: 10px; padding: 1px 7px;
+    font-size: .67rem; font-weight: 700; white-space: nowrap;
+}
+</style>
 """
 
 
-def render_nav_panel(display_name, role, active_tab, is_admin):
-    active_assess = "np-active" if active_tab == "assessment" else ""
-    active_admin  = "np-active" if active_tab == "admin"      else ""
-    role_label    = "Admin" if role == "admin" else "User"
-    avatar_letter = display_name[0].upper() if display_name else "U"
-    short_name    = display_name.split("@")[0] if "@" in display_name else display_name
+def render_nav_rail(display_name, role, active_tab, is_admin):
+    """Slim icon rail using Streamlit sidebar + top-right user badge."""
+    st.markdown(RAIL_CSS, unsafe_allow_html=True)
 
-    if is_admin:
-        nav_items = (
-            f'<button class="np-item {active_assess}" data-nav="assessment">'
-            '<span class="np-icon">&#127970;</span>'
-            '<span class="np-label">Assessment</span></button>'
-            f'<button class="np-item {active_admin}" data-nav="admin">'
-            '<span class="np-icon">&#9881;&#65039;</span>'
-            '<span class="np-label">Admin Panel</span></button>'
-        )
-    else:
-        nav_items = (
-            '<button class="np-item np-active" data-nav="assessment">'
-            '<span class="np-icon">&#127970;</span>'
-            '<span class="np-label">Assessment</span></button>'
-        )
-
-    rail_inner = (
-        '<div class="np-logo-strip">'
-          '<span class="np-logo-icon">&#127959;</span>'
-          '<span class="np-logo-text">Dexxora V360</span>'
-        '</div>'
-        f'<div class="np-nav">{nav_items}</div>'
-        '<div class="np-footer">'
-          '<button class="np-logout" data-nav="logout">'
-            '<span class="np-icon">&#128682;</span>'
-            '<span class="np-label">Logout</span>'
-          '</button>'
-        '</div>'
+    # ── Top-right user badge ──────────────────────────────────────
+    avatar = display_name[0].upper() if display_name else "U"
+    short  = display_name.split("@")[0] if "@" in display_name else display_name
+    role_label = "Admin" if role == "admin" else "User"
+    st.markdown(
+        f"<div id='np-topbar'>"
+        f"<div class='np-avatar'>{avatar}</div>"
+        f"<span class='np-uname'>{short}</span>"
+        f"<span class='np-urole'>{role_label}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
     )
 
-    topbar_inner = (
-        '<div class="np-userinfo">'
-          f'<div class="np-avatar">{avatar_letter}</div>'
-          f'<span class="np-uname">{short_name}</span>'
-          f'<span class="np-urole">{role_label}</span>'
-        '</div>'
-    )
+    # ── Sidebar icon buttons ──────────────────────────────────────
+    with st.sidebar:
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-    def esc(s):
-        return s.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+        # Logo icon (non-clickable)
+        st.markdown(
+            "<div style='width:52px;height:52px;margin:2px auto;display:flex;"
+            "align-items:center;justify-content:center;font-size:1.4rem;'>🏗️</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown("<hr>", unsafe_allow_html=True)
 
-    js = (NAV_PANEL_JS
-          .replace("NAV_DATA",    f"`{esc(rail_inner)}`")
-          .replace("TOPBAR_DATA", f"`{esc(topbar_inner)}`"))
+        if is_admin:
+            if st.button("🏢", key="nav_assess",
+                         type="primary" if active_tab == "assessment" else "secondary",
+                         help="Assessment", use_container_width=False):
+                st.session_state.active_tab = "assessment"
+                st.rerun()
 
-    components.html(js, height=0, scrolling=False)
+            if st.button("⚙️", key="nav_admin",
+                         type="primary" if active_tab == "admin" else "secondary",
+                         help="Admin Panel", use_container_width=False):
+                st.session_state.active_tab = "admin"
+                st.rerun()
+        else:
+            if st.button("🏢", key="nav_assess",
+                         type="primary",
+                         help="Assessment", use_container_width=False):
+                st.session_state.active_tab = "assessment"
+                st.rerun()
 
-    # Handle query-param navigation triggered by rail clicks
-    nav = st.query_params.get("nav", None)
-    if nav:
-        st.query_params.clear()
-        if nav == "logout":
+        # Push logout to bottom
+        st.markdown(
+            "<div style='position:absolute;bottom:20px;left:0;width:64px;'>"
+            "<hr style='border-color:#2e3f52;margin:0 6px 4px;'>",
+            unsafe_allow_html=True,
+        )
+        if st.button("🚪", key="nav_logout", help="Logout", use_container_width=False):
             for k in ["logged_in","current_user","current_role","active_tab",
                       "_dlg_action","_dlg_target"]:
                 st.session_state.pop(k, None)
             st.session_state.logged_in  = False
             st.session_state.active_tab = "assessment"
             st.rerun()
-        elif nav in ("assessment", "admin"):
-            st.session_state.active_tab = nav
-            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────
@@ -1061,7 +1040,7 @@ else:
     ud       = st.session_state.users[st.session_state.current_user]
     is_admin = st.session_state.current_role == "admin"
 
-    render_nav_panel(
+    render_nav_rail(
         display_name=ud["display_name"],
         role=st.session_state.current_role,
         active_tab=st.session_state.active_tab,
