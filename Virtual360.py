@@ -45,22 +45,23 @@ def init_db():
                 username      TEXT PRIMARY KEY,
                 display_name  TEXT NOT NULL,
                 role          TEXT NOT NULL,
-                hotel_access  TEXT NOT NULL,
+                tenant_access  TEXT NOT NULL,
                 password_hash TEXT NOT NULL
             )
         """)
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS hotels (
-                hotel_name TEXT PRIMARY KEY
+            CREATE TABLE IF NOT EXISTS tenants (
+                tenant_name TEXT PRIMARY KEY,
+                tenant_type TEXT NOT NULL DEFAULT 'Commercial'
             )
         """)
         conn.commit()
 
-        # Seed hotels
-        hcount = conn.execute("SELECT COUNT(*) FROM hotels").fetchone()[0]
-        if hcount == 0:
-            for h in ["EDEN Hotel", "Thaala Hotel"]:
-                conn.execute("INSERT OR IGNORE INTO hotels VALUES (?)", (h,))
+        # Seed tenants
+        tcount = conn.execute("SELECT COUNT(*) FROM tenants").fetchone()[0]
+        if tcount == 0:
+            for name, ttype in [("EDEN Tenant", "Residential"), ("Thaala Tenant", "Commercial")]:
+                conn.execute("INSERT OR IGNORE INTO tenants VALUES (?,?)", (name, ttype))
             conn.commit()
 
         # Seed users
@@ -70,27 +71,32 @@ def init_db():
                 conn.execute(
                     "INSERT OR IGNORE INTO users VALUES (?,?,?,?,?)",
                     (uname, ud["display_name"], ud["role"],
-                     json.dumps(ud["hotel_access"]), ud["password_hash"])
+                     json.dumps(ud["tenant_access"]), ud["password_hash"])
                 )
             conn.commit()
 
 
-def load_hotels_from_db() -> list:
-    """Return sorted list of hotel names from the DB."""
+def load_tenants_from_db() -> list:
+    """Return sorted list of (tenant_name, tenant_type) tuples from the DB."""
     with get_db() as conn:
-        rows = conn.execute("SELECT hotel_name FROM hotels ORDER BY hotel_name").fetchall()
-    return [r["hotel_name"] for r in rows]
+        rows = conn.execute("SELECT tenant_name, tenant_type FROM tenants ORDER BY tenant_name").fetchall()
+    return [{"name": r["tenant_name"], "type": r["tenant_type"]} for r in rows]
 
 
-def add_hotel_to_db(hotel_name: str):
+def get_tenant_names() -> list:
+    """Return just a list of tenant name strings (for dropdowns)."""
+    return [t["name"] for t in load_tenants_from_db()]
+
+
+def add_tenant_to_db(tenant_name: str, tenant_type: str):
     with get_db() as conn:
-        conn.execute("INSERT OR IGNORE INTO hotels VALUES (?)", (hotel_name,))
+        conn.execute("INSERT OR IGNORE INTO tenants VALUES (?,?)", (tenant_name, tenant_type))
         conn.commit()
 
 
-def delete_hotel_from_db(hotel_name: str):
+def delete_tenant_from_db(tenant_name: str):
     with get_db() as conn:
-        conn.execute("DELETE FROM hotels WHERE hotel_name = ?", (hotel_name,))
+        conn.execute("DELETE FROM tenants WHERE tenant_name = ?", (tenant_name,))
         conn.commit()
 
 
@@ -103,7 +109,7 @@ def _get_seed_users() -> dict:
                 uname: {
                     "password_hash": udata["password_hash"],
                     "role":          udata["role"],
-                    "hotel_access":  list(udata["hotel_access"]),
+                    "tenant_access":  list(udata["tenant_access"]),
                     "display_name":  udata["display_name"],
                 }
                 for uname, udata in raw.items()
@@ -115,19 +121,19 @@ def _get_seed_users() -> dict:
         "admin": {
             "password_hash": hash_pw("Admin@123"),
             "role":          "admin",
-            "hotel_access":  ["EDEN Hotel", "Thaala Hotel"],
+            "tenant_access":  ["EDEN Tenant", "Thaala Tenant"],
             "display_name":  "Administrator",
         },
         "eden_user": {
             "password_hash": hash_pw("Eden@123"),
             "role":          "user",
-            "hotel_access":  ["EDEN Hotel"],
+            "tenant_access":  ["EDEN Tenant"],
             "display_name":  "EDEN Staff",
         },
         "thaala_user": {
             "password_hash": hash_pw("Thaala@123"),
             "role":          "user",
-            "hotel_access":  ["Thaala Hotel"],
+            "tenant_access":  ["Thaala Tenant"],
             "display_name":  "Thaala Staff",
         },
     }
@@ -141,7 +147,7 @@ def load_users_from_db() -> dict:
         row["username"]: {
             "display_name":  row["display_name"],
             "role":          row["role"],
-            "hotel_access":  json.loads(row["hotel_access"]),
+            "tenant_access":  json.loads(row["tenant_access"]),
             "password_hash": row["password_hash"],
         }
         for row in rows
@@ -154,7 +160,7 @@ def save_user_to_db(username: str, ud: dict):
         conn.execute(
             "INSERT OR REPLACE INTO users VALUES (?,?,?,?,?)",
             (username, ud["display_name"], ud["role"],
-             json.dumps(ud["hotel_access"]), ud["password_hash"])
+             json.dumps(ud["tenant_access"]), ud["password_hash"])
         )
         conn.commit()
 
@@ -198,12 +204,12 @@ def init_state():
     if "users" not in st.session_state:
         st.session_state.users = load_users_from_db()
 
-    if "hotels" not in st.session_state:
-        st.session_state.hotels = load_hotels_from_db()
+    if "tenants" not in st.session_state:
+        st.session_state.tenants = load_tenants_from_db()
 
-    if "hotel_data" not in st.session_state:
-        st.session_state.hotel_data = pd.DataFrame(columns=[
-            "Date Added", "Hotel Name", "Name of Area", "Category", "Coverage (SQFT)"
+    if "tenant_data" not in st.session_state:
+        st.session_state.tenant_data = pd.DataFrame(columns=[
+            "Date Added", "Tenant Name", "Name of Area", "Category", "Coverage (SQFT)"
         ])
     if "last_category" not in st.session_state:
         st.session_state.last_category = "Suite/Room"
@@ -248,7 +254,7 @@ def show_login():
     with col:
         st.markdown("""
         <div style='text-align:center;padding:40px 0 10px 0;'>
-            <h2 style='color:#2E3B4E;margin-bottom:2px;'>🏨 Dexxora Pvt Ltd</h2>
+            <h2 style='color:#2E3B4E;margin-bottom:2px;'>🏢 Dexxora Pvt Ltd</h2>
             <p style='color:#666;font-size:1rem;margin-top:0;'>Virtual360 Cost Assessment</p>
         </div>""", unsafe_allow_html=True)
 
@@ -292,8 +298,8 @@ def show_admin_panel():
     )
     st.markdown("---")
 
-    tab_users, tab_hotels, tab_data, tab_export = st.tabs([
-        "👥 User Management", "🏨 Hotel Management", "📊 All Hotel Data", "📥 Export Reports"
+    tab_users, tab_tenants, tab_data, tab_export = st.tabs([
+        "👥 User Management", "🏢 Tenant Management", "📊 All Tenant Data", "📥 Export Reports"
     ])
 
     # ── TAB 1 : User Management ──────────────────────────────────────
@@ -304,7 +310,7 @@ def show_admin_panel():
                 "Username":     u,
                 "Display Name": d["display_name"],
                 "Role":         d["role"].capitalize(),
-                "Hotel Access": ", ".join(d["hotel_access"]),
+                "Tenant Access": ", ".join(d["tenant_access"]),
             } for u, d in st.session_state.users.items()]),
             use_container_width=True, hide_index=True,
         )
@@ -319,9 +325,9 @@ def show_admin_panel():
                 nu   = st.text_input("Username")
                 nd   = st.text_input("Display Name")
                 nr   = st.selectbox("Role", ["user", "admin"])
-                nh   = st.multiselect("Hotel Access",
-                                      st.session_state.hotels,
-                                      default=st.session_state.hotels[:1])
+                nh   = st.multiselect("Tenant Access",
+                                      get_tenant_names(),
+                                      default=get_tenant_names()[:1])
                 np1  = st.text_input("Password",         type="password")
                 np2  = st.text_input("Confirm Password", type="password")
                 add  = st.form_submit_button("Add User", use_container_width=True)
@@ -334,12 +340,12 @@ def show_admin_panel():
                 elif np1 != np2:
                     st.error("Passwords do not match.")
                 elif not nh:
-                    st.error("Select at least one hotel.")
+                    st.error("Select at least one tenant.")
                 else:
                     st.session_state.users[nu] = {
                         "password_hash": hash_pw(np1),
                         "role":          nr,
-                        "hotel_access":  nh,
+                        "tenant_access":  nh,
                         "display_name":  nd or nu,
                     }
                     save_users_to_secrets(st.session_state.users)
@@ -381,127 +387,130 @@ def show_admin_panel():
                 st.success(f"User **{du}** deleted.")
                 st.rerun()
 
-        # Edit hotel access
+        # Edit tenant access
         st.markdown("---")
-        st.subheader("🏨 Edit Hotel Access")
+        st.subheader("🏢 Edit Tenant Access")
         with st.form("edit_access_form"):
             ea_u    = st.selectbox("Select User",
                                    list(st.session_state.users.keys()), key="ea_u")
-            cur_acc = st.session_state.users.get(ea_u, {}).get("hotel_access", [])
-            new_acc = st.multiselect("Hotel Access",
-                                     st.session_state.hotels,
+            cur_acc = st.session_state.users.get(ea_u, {}).get("tenant_access", [])
+            new_acc = st.multiselect("Tenant Access",
+                                     get_tenant_names(),
                                      default=cur_acc, key="ea_acc")
             ea_btn  = st.form_submit_button("Update Access")
 
         if ea_btn:
             if not new_acc:
-                st.error("At least one hotel must be selected.")
+                st.error("At least one tenant must be selected.")
             else:
-                st.session_state.users[ea_u]["hotel_access"] = new_acc
+                st.session_state.users[ea_u]["tenant_access"] = new_acc
                 save_users_to_secrets(st.session_state.users)
-                st.success(f"Hotel access for **{ea_u}** updated.")
+                st.success(f"Tenant access for **{ea_u}** updated.")
                 st.rerun()
 
-    # ── TAB 2 : Hotel Management ─────────────────────────────────────
-    with tab_hotels:
-        st.subheader("🏨 Hotels")
+    # ── TAB 2 : Tenant Management ─────────────────────────────────────
+    with tab_tenants:
+        st.subheader("🏢 Tenants")
 
-        hotels = st.session_state.hotels
-        if hotels:
+        tenants = st.session_state.tenants
+        if tenants:
             st.dataframe(
-                pd.DataFrame({"Hotel Name": hotels}),
+                pd.DataFrame([{"Tenant Name": t["name"], "Tenant Type": t["type"]} for t in tenants]),
                 use_container_width=True, hide_index=True,
             )
         else:
-            st.info("No hotels added yet.")
+            st.info("No tenants added yet.")
 
         st.markdown("---")
-        hcol_add, hcol_del = st.columns(2)
+        tcol_add, tcol_del = st.columns(2)
 
-        with hcol_add:
-            st.subheader("➕ Add New Hotel")
-            with st.form("add_hotel_form", clear_on_submit=True):
-                new_hotel_name = st.text_input("Hotel Name", placeholder="e.g. Marina Bay Hotel")
-                add_hotel_btn  = st.form_submit_button("Add Hotel", use_container_width=True)
+        with tcol_add:
+            st.subheader("➕ Add New Tenant")
+            TENANT_TYPES = ["Commercial", "Residential", "Retail", "Industrial", "Hospitality", "Mixed-Use", "Other"]
+            with st.form("add_tenant_form", clear_on_submit=True):
+                new_tenant_name = st.text_input("Tenant Name", placeholder="e.g. Marina Bay Tower")
+                new_tenant_type = st.selectbox("Tenant Type", TENANT_TYPES)
+                add_tenant_btn  = st.form_submit_button("Add Tenant", use_container_width=True)
 
-            if add_hotel_btn:
-                hn = new_hotel_name.strip()
+            if add_tenant_btn:
+                hn = new_tenant_name.strip()
                 if not hn:
-                    st.error("Hotel name cannot be empty.")
-                elif hn in st.session_state.hotels:
-                    st.error("Hotel already exists.")
+                    st.error("Tenant name cannot be empty.")
+                elif hn in get_tenant_names():
+                    st.error("Tenant already exists.")
                 else:
-                    add_hotel_to_db(hn)
-                    st.session_state.hotels = load_hotels_from_db()
-                    st.success(f"Hotel **{hn}** added.")
+                    add_tenant_to_db(hn, new_tenant_type)
+                    st.session_state.tenants = load_tenants_from_db()
+                    st.success(f"Tenant **{hn}** ({new_tenant_type}) added.")
                     st.rerun()
 
-        with hcol_del:
-            st.subheader("🗑️ Delete Hotel")
-            st.warning("Deleting a hotel will NOT remove its assessment data.", icon="⚠️")
-            with st.form("del_hotel_form", clear_on_submit=True):
-                del_hotel = st.selectbox(
-                    "Select Hotel to Delete",
-                    hotels if hotels else ["(none)"],
-                    key="del_hotel_sel",
+        with tcol_del:
+            st.subheader("🗑️ Delete Tenant")
+            st.warning("Deleting a tenant will NOT remove its assessment data.", icon="⚠️")
+            tenant_name_list = get_tenant_names()
+            with st.form("del_tenant_form", clear_on_submit=True):
+                del_tenant = st.selectbox(
+                    "Select Tenant to Delete",
+                    tenant_name_list if tenant_name_list else ["(none)"],
+                    key="del_tenant_sel",
                 )
-                del_hotel_btn = st.form_submit_button("Delete Hotel", type="primary",
+                del_tenant_btn = st.form_submit_button("Delete Tenant", type="primary",
                                                        use_container_width=True)
 
-            if del_hotel_btn and del_hotel != "(none)":
-                delete_hotel_from_db(del_hotel)
-                # Remove from all user hotel_access lists
+            if del_tenant_btn and del_tenant != "(none)":
+                delete_tenant_from_db(del_tenant)
+                # Remove from all user tenant_access lists
                 for uname, ud in st.session_state.users.items():
-                    if del_hotel in ud["hotel_access"]:
-                        ud["hotel_access"] = [h for h in ud["hotel_access"] if h != del_hotel]
+                    if del_tenant in ud["tenant_access"]:
+                        ud["tenant_access"] = [t for t in ud["tenant_access"] if t != del_tenant]
                         save_user_to_db(uname, ud)
-                st.session_state.hotels = load_hotels_from_db()
+                st.session_state.tenants = load_tenants_from_db()
                 st.session_state.users  = load_users_from_db()
-                st.success(f"Hotel **{del_hotel}** deleted.")
+                st.success(f"Tenant **{del_tenant}** deleted.")
                 st.rerun()
 
-    # ── TAB 3 : All Hotel Data ───────────────────────────────────────
+    # ── TAB 3 : All Tenant Data ───────────────────────────────────────
     with tab_data:
         st.subheader("All Assessment Records")
-        if st.session_state.hotel_data.empty:
+        if st.session_state.tenant_data.empty:
             st.info("No assessment data recorded yet.")
         else:
             hf = st.multiselect(
-                "Filter by Hotel",
-                st.session_state.hotels,
-                default=st.session_state.hotels,
+                "Filter by Tenant",
+                get_tenant_names(),
+                default=get_tenant_names(),
                 key="adm_hf",
             )
-            vdf = st.session_state.hotel_data[
-                st.session_state.hotel_data["Hotel Name"].isin(hf)
+            vdf = st.session_state.tenant_data[
+                st.session_state.tenant_data["Tenant Name"].isin(hf)
             ]
             st.dataframe(vdf, use_container_width=True, hide_index=True)
             c1, c2, c3 = st.columns(3)
             c1.metric("Total Records", len(vdf))
             c2.metric("Total SQFT",     f"{vdf['Coverage (SQFT)'].sum():,.1f}")
-            c3.metric("Hotels",        vdf["Hotel Name"].nunique())
+            c3.metric("Tenants",        vdf["Tenant Name"].nunique())
 
         st.markdown("---")
         if st.button("🗑️ Clear ALL Data", type="primary"):
-            st.session_state.hotel_data = pd.DataFrame(
-                columns=st.session_state.hotel_data.columns)
+            st.session_state.tenant_data = pd.DataFrame(
+                columns=st.session_state.tenant_data.columns)
             st.success("All data cleared.")
             st.rerun()
 
     # ── TAB 3 : Export Reports ───────────────────────────────────────
     with tab_export:
         st.subheader("Export Assessment Report")
-        if st.session_state.hotel_data.empty:
+        if st.session_state.tenant_data.empty:
             st.info("No data to export yet.")
         else:
             eh = st.multiselect(
-                "Include Hotels",
-                st.session_state.hotels,
-                default=st.session_state.hotels,
+                "Include Tenants",
+                get_tenant_names(),
+                default=get_tenant_names(),
                 key="adm_eh",
             )
-            edf = st.session_state.hotel_data[
-                st.session_state.hotel_data["Hotel Name"].isin(eh)
+            edf = st.session_state.tenant_data[
+                st.session_state.tenant_data["Tenant Name"].isin(eh)
             ]
             if not edf.empty:
                 st.download_button(
@@ -511,7 +520,7 @@ def show_admin_panel():
                     mime="application/pdf",
                 )
             else:
-                st.warning("No data for selected hotels.")
+                st.warning("No data for selected tenants.")
 
 # ─────────────────────────────────────────────
 # ASSESSMENT PAGE
@@ -524,18 +533,18 @@ def show_assessment():
     </script>""", height=0)
 
     user_data    = st.session_state.users[st.session_state.current_user]
-    hotel_access = user_data["hotel_access"]
+    tenant_access = user_data["tenant_access"]
 
     st.markdown("<h3 style='color:#2E3B4E;margin-bottom:-10px;'>Dexxora Pvt Ltd</h3>",
                 unsafe_allow_html=True)
-    st.title("🏨 Virtual360 Cost Assessment")
+    st.title("🏢 Virtual360 Cost Assessment")
     st.markdown("---")
     st.subheader("📍 Quick Data Entry")
 
     with st.form("entry_form", clear_on_submit=True):
         f1, f2, f3, f4, f5 = st.columns([1.5, 2.5, 2, 1, 1])
         with f1:
-            hotel_choice = st.selectbox("Hotel Name", hotel_access)
+            tenant_choice = st.selectbox("Tenant Name", tenant_access)
         with f2:
             area_name = st.text_input("Name of Area")
         with f3:
@@ -554,13 +563,13 @@ def show_assessment():
         if area_name and sqm > 0:
             new_row = pd.DataFrame({
                 "Date Added":     [datetime.now().strftime("%Y-%m-%d")],
-                "Hotel Name":     [hotel_choice],
+                "Tenant Name":     [tenant_choice],
                 "Name of Area":   [area_name],
                 "Category":       [cat],
                 "Coverage (SQFT)": [sqm],
             })
-            st.session_state.hotel_data = pd.concat(
-                [st.session_state.hotel_data, new_row], ignore_index=True)
+            st.session_state.tenant_data = pd.concat(
+                [st.session_state.tenant_data, new_row], ignore_index=True)
             st.session_state.last_category = cat
             st.rerun()
         else:
@@ -568,29 +577,29 @@ def show_assessment():
 
     st.markdown("---")
 
-    hotel_filter = st.sidebar.multiselect(
-        "Filter View", hotel_access, default=hotel_access)
+    tenant_filter = st.sidebar.multiselect(
+        "Filter View", tenant_access, default=tenant_access)
 
     # Refresh hotel list in case admin added new ones
-    st.session_state.hotels = load_hotels_from_db()
+    # tenants refreshed above
 
-    if not st.session_state.hotel_data.empty:
+    if not st.session_state.tenant_data.empty:
         st.subheader("📊 Assessment Inventory")
-        disp_df = st.session_state.hotel_data[
-            st.session_state.hotel_data["Hotel Name"].isin(hotel_access)
+        disp_df = st.session_state.tenant_data[
+            st.session_state.tenant_data["Tenant Name"].isin(tenant_access)
         ]
         edited = st.data_editor(
             disp_df, num_rows="dynamic",
             use_container_width=True, key="main_editor",
         )
         if not edited.equals(disp_df):
-            other = st.session_state.hotel_data[
-                ~st.session_state.hotel_data["Hotel Name"].isin(hotel_access)
+            other = st.session_state.tenant_data[
+                ~st.session_state.tenant_data["Tenant Name"].isin(tenant_access)
             ]
-            st.session_state.hotel_data = pd.concat([other, edited], ignore_index=True)
+            st.session_state.tenant_data = pd.concat([other, edited], ignore_index=True)
             st.rerun()
 
-        exp_df = edited[edited["Hotel Name"].isin(hotel_filter)]
+        exp_df = edited[edited["Tenant Name"].isin(tenant_filter)]
         if not exp_df.empty:
             st.markdown("### 📥 Export Report")
             e1, _ = st.columns([1, 3])
@@ -603,10 +612,10 @@ def show_assessment():
                     use_container_width=True,
                 )
             if st.sidebar.button("🗑️ Clear My Data", use_container_width=True):
-                other = st.session_state.hotel_data[
-                    ~st.session_state.hotel_data["Hotel Name"].isin(hotel_access)
+                other = st.session_state.tenant_data[
+                    ~st.session_state.tenant_data["Tenant Name"].isin(tenant_access)
                 ]
-                st.session_state.hotel_data = other.reset_index(drop=True)
+                st.session_state.tenant_data = other.reset_index(drop=True)
                 st.rerun()
         else:
             st.warning("No data matches the selected filters.")
@@ -626,7 +635,7 @@ else:
         st.markdown("---")
 
         if is_admin:
-            if st.button("🏨 Assessment", use_container_width=True,
+            if st.button("🏢 Assessment", use_container_width=True,
                          type="primary" if st.session_state.active_tab == "assessment" else "secondary"):
                 st.session_state.active_tab = "assessment"
                 st.rerun()
