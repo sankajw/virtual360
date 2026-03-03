@@ -34,7 +34,7 @@ if 'last_category' not in st.session_state:
     st.session_state.last_category = "Suite/Room"
 
 # --- BRANDING HEADER ---
-st.markdown("<h3 style='text-align: left; color: #2E3B4E; margin-bottom: -10px;'>SkyveGen Pvt Ltd</h3>", unsafe_allow_html=True)
+st.markdown("<h3 style='text-align: left; color: #2E3B4E; margin-bottom: -10px;'>Dexxora Pvt Ltd</h3>", unsafe_allow_html=True)
 st.title("🏨 Virtual360 Cost Assessment")
 st.markdown("---")
 
@@ -148,4 +148,5 @@ footer_html = f"""
     </div>
 """
 st.markdown(footer_html, unsafe_allow_html=True)
+
 
