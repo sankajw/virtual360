@@ -9,7 +9,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 import streamlit.components.v1 as components
 
 # --- Setup ---
-st.set_page_config(page_title="SkyveGen | Virtual360", layout="wide")
+st.set_page_config(page_title="Dexxora | Virtual360", layout="wide")
 
 # --- AUTO-FOCUS JAVASCRIPT ---
 components.html(
@@ -148,3 +148,4 @@ footer_html = f"""
     </div>
 """
 st.markdown(footer_html, unsafe_allow_html=True)
+
