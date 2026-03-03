@@ -412,9 +412,9 @@ def show_admin_panel():
         )
 
         st.markdown("---")
-        col_add, col_manage = st.columns(2)
+        col_add, col_edit, col_manage = st.columns(3)
 
-        # Add user
+        # ── Add User ─────────────────────────────────────────────────
         with col_add:
             st.subheader("➕ Add New User")
             DOMAIN = "@dexxora360"
@@ -459,26 +459,48 @@ def show_admin_panel():
                     st.success(f"User **{nu}** created.")
                     st.rerun()
 
-        # Change password + delete
-        with col_manage:
-            st.subheader("🔑 Change Password")
-            with st.form("change_pw_form", clear_on_submit=True):
-                su  = st.selectbox("Select User", list(st.session_state.users.keys()), key="su_chg")
-                p1  = st.text_input("New Password",     type="password", key="cpw1")
-                p2  = st.text_input("Confirm Password", type="password", key="cpw2")
-                chg = st.form_submit_button("Update Password", use_container_width=True)
+        # ── Edit User (all fields except username) ────────────────────
+        with col_edit:
+            st.subheader("✏️ Edit User")
+            all_users    = list(st.session_state.users.keys())
+            valid_tenants = get_tenant_names()
+            with st.form("edit_user_form", clear_on_submit=False):
+                eu = st.selectbox("Select User", all_users, key="eu_sel")
+                eu_data     = st.session_state.users.get(eu, {})
+                eu_dname    = st.text_input("Display Name",
+                                            value=eu_data.get("display_name", ""),
+                                            key="eu_dname")
+                eu_role     = st.selectbox("Role", ["user", "admin"],
+                                           index=0 if eu_data.get("role") == "user" else 1,
+                                           key="eu_role")
+                eu_cur_acc  = eu_data.get("tenant_access", [])
+                eu_safe_acc = [a for a in eu_cur_acc if a in valid_tenants]
+                eu_access   = st.multiselect("Tenant Access", valid_tenants,
+                                             default=eu_safe_acc, key="eu_access")
+                st.markdown("**Change Password** *(leave blank to keep current)*")
+                eu_pw1 = st.text_input("New Password",     type="password", key="eu_pw1")
+                eu_pw2 = st.text_input("Confirm Password", type="password", key="eu_pw2")
+                edit_btn = st.form_submit_button("Save Changes", use_container_width=True)
 
-            if chg:
-                if not p1:
-                    st.error("Password cannot be empty.")
-                elif p1 != p2:
+            if edit_btn:
+                if not eu_access:
+                    st.error("Select at least one tenant.")
+                elif eu_pw1 and eu_pw1 != eu_pw2:
                     st.error("Passwords do not match.")
                 else:
-                    st.session_state.users[su]["password_hash"] = hash_pw(p1)
+                    updated = dict(st.session_state.users[eu])
+                    updated["display_name"]  = eu_dname.strip() or eu
+                    updated["role"]          = eu_role
+                    updated["tenant_access"] = eu_access
+                    if eu_pw1:
+                        updated["password_hash"] = hash_pw(eu_pw1)
+                    st.session_state.users[eu] = updated
                     save_users_to_secrets(st.session_state.users)
-                    st.success(f"Password for **{su}** updated.")
+                    st.success(f"User **{eu}** updated.")
+                    st.rerun()
 
-            st.markdown("---")
+        # ── Delete User ───────────────────────────────────────────────
+        with col_manage:
             st.subheader("🗑️ Delete User")
             deletable = [u for u in st.session_state.users
                          if u != st.session_state.current_user]
@@ -486,7 +508,7 @@ def show_admin_panel():
                 du  = st.selectbox("Select User to Delete",
                                    deletable if deletable else ["(none)"], key="su_del")
                 db  = st.form_submit_button("Delete User", type="primary",
-                                             use_container_width=True)
+                                            use_container_width=True)
 
             if db and du != "(none)":
                 del st.session_state.users[du]
@@ -494,29 +516,7 @@ def show_admin_panel():
                 st.success(f"User **{du}** deleted.")
                 st.rerun()
 
-        # Edit tenant access
-        st.markdown("---")
-        st.subheader("🏢 Edit Tenant Access")
-        with st.form("edit_access_form"):
-            ea_u       = st.selectbox("Select User",
-                                      list(st.session_state.users.keys()), key="ea_u")
-            valid_names = get_tenant_names()
-            cur_acc     = st.session_state.users.get(ea_u, {}).get("tenant_access", [])
-            # Filter out stale entries (e.g. old hotel names no longer in tenant list)
-            safe_default = [a for a in cur_acc if a in valid_names]
-            new_acc = st.multiselect("Tenant Access",
-                                     valid_names,
-                                     default=safe_default, key="ea_acc")
-            ea_btn  = st.form_submit_button("Update Access")
 
-        if ea_btn:
-            if not new_acc:
-                st.error("At least one tenant must be selected.")
-            else:
-                st.session_state.users[ea_u]["tenant_access"] = new_acc
-                save_users_to_secrets(st.session_state.users)
-                st.success(f"Tenant access for **{ea_u}** updated.")
-                st.rerun()
 
     # ── TAB 2 : Tenant Management ─────────────────────────────────────
     with tab_tenants:
