@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import io
 import hashlib
-import toml
+import sqlite3
+import json
 import os
 from datetime import datetime
 from reportlab.lib import colors
@@ -16,7 +17,8 @@ import streamlit.components.v1 as components
 # ─────────────────────────────────────────────
 st.set_page_config(page_title="Dexxora | Virtual360", layout="wide")
 
-SECRETS_PATH = os.path.join(os.path.dirname(__file__), ".streamlit", "secrets.toml")
+# /tmp is always writable — on Streamlit Cloud AND locally
+DB_PATH = "/tmp/virtual360_users.db"
 
 # ─────────────────────────────────────────────
 # HELPERS
@@ -25,43 +27,129 @@ def hash_pw(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 
-def load_users_from_secrets() -> dict:
+def get_db():
+    """Return a SQLite connection to the writable /tmp database."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
     """
-    Load users from st.secrets (deployed on Streamlit Cloud) OR from the
-    local .streamlit/secrets.toml file (local / self-hosted dev).
-    Returns a plain Python dict ready for session_state.
+    Create the users table if it doesn't exist, then seed it from
+    st.secrets (Streamlit Cloud) or fall back to hard-coded defaults.
+    Only seeds on the very first run (empty table).
     """
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                username     TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                role         TEXT NOT NULL,
+                hotel_access TEXT NOT NULL,   -- JSON array
+                password_hash TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+
+        # Seed only when table is empty
+        count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        if count == 0:
+            seed_users = _get_seed_users()
+            for uname, ud in seed_users.items():
+                conn.execute(
+                    "INSERT OR IGNORE INTO users VALUES (?,?,?,?,?)",
+                    (uname, ud["display_name"], ud["role"],
+                     json.dumps(ud["hotel_access"]), ud["password_hash"])
+                )
+            conn.commit()
+
+
+def _get_seed_users() -> dict:
+    """Read initial users from st.secrets, falling back to defaults."""
     try:
         raw = st.secrets.get("users", {})
-        users = {}
-        for uname, udata in raw.items():
-            users[uname] = {
-                "password_hash": udata["password_hash"],
-                "role":          udata["role"],
-                "hotel_access":  list(udata["hotel_access"]),
-                "display_name":  udata["display_name"],
+        if raw:
+            return {
+                uname: {
+                    "password_hash": udata["password_hash"],
+                    "role":          udata["role"],
+                    "hotel_access":  list(udata["hotel_access"]),
+                    "display_name":  udata["display_name"],
+                }
+                for uname, udata in raw.items()
             }
-        return users
     except Exception:
-        return {}
+        pass
+    # Hard-coded fallback
+    return {
+        "admin": {
+            "password_hash": hash_pw("Admin@123"),
+            "role":          "admin",
+            "hotel_access":  ["EDEN Hotel", "Thaala Hotel"],
+            "display_name":  "Administrator",
+        },
+        "eden_user": {
+            "password_hash": hash_pw("Eden@123"),
+            "role":          "user",
+            "hotel_access":  ["EDEN Hotel"],
+            "display_name":  "EDEN Staff",
+        },
+        "thaala_user": {
+            "password_hash": hash_pw("Thaala@123"),
+            "role":          "user",
+            "hotel_access":  ["Thaala Hotel"],
+            "display_name":  "Thaala Staff",
+        },
+    }
+
+
+def load_users_from_db() -> dict:
+    """Load all users from the /tmp SQLite database into a plain dict."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT * FROM users").fetchall()
+    return {
+        row["username"]: {
+            "display_name":  row["display_name"],
+            "role":          row["role"],
+            "hotel_access":  json.loads(row["hotel_access"]),
+            "password_hash": row["password_hash"],
+        }
+        for row in rows
+    }
+
+
+def save_user_to_db(username: str, ud: dict):
+    """Insert or replace a single user record."""
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO users VALUES (?,?,?,?,?)",
+            (username, ud["display_name"], ud["role"],
+             json.dumps(ud["hotel_access"]), ud["password_hash"])
+        )
+        conn.commit()
+
+
+def delete_user_from_db(username: str):
+    """Delete a user from the database."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM users WHERE username = ?", (username,))
+        conn.commit()
 
 
 def save_users_to_secrets(users: dict):
     """
-    Write the current user store back to the local .streamlit/secrets.toml.
-    On Streamlit Cloud, manage credentials via the Secrets UI instead.
+    Compatibility shim — persists all users to SQLite.
+    Called wherever the old secrets-based save was used.
     """
-    try:
-        os.makedirs(os.path.dirname(SECRETS_PATH), exist_ok=True)
-        existing = {}
-        if os.path.exists(SECRETS_PATH):
-            with open(SECRETS_PATH, "r") as f:
-                existing = toml.load(f)
-        existing["users"] = users
-        with open(SECRETS_PATH, "w") as f:
-            toml.dump(existing, f)
-    except Exception as e:
-        st.warning(f"⚠️ Could not persist users to secrets.toml: {e}")
+    for uname, ud in users.items():
+        save_user_to_db(uname, ud)
+    # Keep session_state in sync
+    st.session_state.users = load_users_from_db()
+
+
+# Initialise DB on every cold start
+init_db()
 
 
 # ─────────────────────────────────────────────
@@ -79,27 +167,7 @@ def init_state():
             st.session_state[k] = v
 
     if "users" not in st.session_state:
-        loaded = load_users_from_secrets()
-        st.session_state.users = loaded if loaded else {
-            "admin": {
-                "password_hash": hash_pw("Admin@123"),
-                "role":          "admin",
-                "hotel_access":  ["EDEN Hotel", "Thaala Hotel"],
-                "display_name":  "Administrator",
-            },
-            "eden_user": {
-                "password_hash": hash_pw("Eden@123"),
-                "role":          "user",
-                "hotel_access":  ["EDEN Hotel"],
-                "display_name":  "EDEN Staff",
-            },
-            "thaala_user": {
-                "password_hash": hash_pw("Thaala@123"),
-                "role":          "user",
-                "hotel_access":  ["Thaala Hotel"],
-                "display_name":  "Thaala Staff",
-            },
-        }
+        st.session_state.users = load_users_from_db()
 
     if "hotel_data" not in st.session_state:
         st.session_state.hotel_data = pd.DataFrame(columns=[
@@ -187,8 +255,8 @@ def show_login():
 def show_admin_panel():
     st.markdown("## ⚙️ Admin Panel")
     st.caption(
-        "User changes are written to `.streamlit/secrets.toml` (local) "
-        "or manage them via the Streamlit Cloud Secrets UI (deployed)."
+        "User changes are saved to a SQLite database in `/tmp`. "
+        "Seed credentials are loaded from `st.secrets` on first run."
     )
     st.markdown("---")
 
