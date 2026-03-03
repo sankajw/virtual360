@@ -36,33 +36,62 @@ def get_db():
 
 def init_db():
     """
-    Create the users table if it doesn't exist, then seed it from
-    st.secrets (Streamlit Cloud) or fall back to hard-coded defaults.
-    Only seeds on the very first run (empty table).
+    Create tables if they don't exist, then seed from st.secrets / defaults.
+    Only seeds on the very first run (empty tables).
     """
     with get_db() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                username     TEXT PRIMARY KEY,
-                display_name TEXT NOT NULL,
-                role         TEXT NOT NULL,
-                hotel_access TEXT NOT NULL,   -- JSON array
+                username      TEXT PRIMARY KEY,
+                display_name  TEXT NOT NULL,
+                role          TEXT NOT NULL,
+                hotel_access  TEXT NOT NULL,
                 password_hash TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS hotels (
+                hotel_name TEXT PRIMARY KEY
             )
         """)
         conn.commit()
 
-        # Seed only when table is empty
-        count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        if count == 0:
-            seed_users = _get_seed_users()
-            for uname, ud in seed_users.items():
+        # Seed hotels
+        hcount = conn.execute("SELECT COUNT(*) FROM hotels").fetchone()[0]
+        if hcount == 0:
+            for h in ["EDEN Hotel", "Thaala Hotel"]:
+                conn.execute("INSERT OR IGNORE INTO hotels VALUES (?)", (h,))
+            conn.commit()
+
+        # Seed users
+        ucount = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        if ucount == 0:
+            for uname, ud in _get_seed_users().items():
                 conn.execute(
                     "INSERT OR IGNORE INTO users VALUES (?,?,?,?,?)",
                     (uname, ud["display_name"], ud["role"],
                      json.dumps(ud["hotel_access"]), ud["password_hash"])
                 )
             conn.commit()
+
+
+def load_hotels_from_db() -> list:
+    """Return sorted list of hotel names from the DB."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT hotel_name FROM hotels ORDER BY hotel_name").fetchall()
+    return [r["hotel_name"] for r in rows]
+
+
+def add_hotel_to_db(hotel_name: str):
+    with get_db() as conn:
+        conn.execute("INSERT OR IGNORE INTO hotels VALUES (?)", (hotel_name,))
+        conn.commit()
+
+
+def delete_hotel_from_db(hotel_name: str):
+    with get_db() as conn:
+        conn.execute("DELETE FROM hotels WHERE hotel_name = ?", (hotel_name,))
+        conn.commit()
 
 
 def _get_seed_users() -> dict:
@@ -169,9 +198,12 @@ def init_state():
     if "users" not in st.session_state:
         st.session_state.users = load_users_from_db()
 
+    if "hotels" not in st.session_state:
+        st.session_state.hotels = load_hotels_from_db()
+
     if "hotel_data" not in st.session_state:
         st.session_state.hotel_data = pd.DataFrame(columns=[
-            "Date Added", "Hotel Name", "Name of Area", "Category", "Coverage (SQM)"
+            "Date Added", "Hotel Name", "Name of Area", "Category", "Coverage (SQFT)"
         ])
     if "last_category" not in st.session_state:
         st.session_state.last_category = "Suite/Room"
@@ -260,8 +292,8 @@ def show_admin_panel():
     )
     st.markdown("---")
 
-    tab_users, tab_data, tab_export = st.tabs([
-        "👥 User Management", "📊 All Hotel Data", "📥 Export Reports"
+    tab_users, tab_hotels, tab_data, tab_export = st.tabs([
+        "👥 User Management", "🏨 Hotel Management", "📊 All Hotel Data", "📥 Export Reports"
     ])
 
     # ── TAB 1 : User Management ──────────────────────────────────────
@@ -288,8 +320,8 @@ def show_admin_panel():
                 nd   = st.text_input("Display Name")
                 nr   = st.selectbox("Role", ["user", "admin"])
                 nh   = st.multiselect("Hotel Access",
-                                      ["EDEN Hotel", "Thaala Hotel"],
-                                      default=["EDEN Hotel"])
+                                      st.session_state.hotels,
+                                      default=st.session_state.hotels[:1])
                 np1  = st.text_input("Password",         type="password")
                 np2  = st.text_input("Confirm Password", type="password")
                 add  = st.form_submit_button("Add User", use_container_width=True)
@@ -357,7 +389,7 @@ def show_admin_panel():
                                    list(st.session_state.users.keys()), key="ea_u")
             cur_acc = st.session_state.users.get(ea_u, {}).get("hotel_access", [])
             new_acc = st.multiselect("Hotel Access",
-                                     ["EDEN Hotel", "Thaala Hotel"],
+                                     st.session_state.hotels,
                                      default=cur_acc, key="ea_acc")
             ea_btn  = st.form_submit_button("Update Access")
 
@@ -370,7 +402,65 @@ def show_admin_panel():
                 st.success(f"Hotel access for **{ea_u}** updated.")
                 st.rerun()
 
-    # ── TAB 2 : All Hotel Data ───────────────────────────────────────
+    # ── TAB 2 : Hotel Management ─────────────────────────────────────
+    with tab_hotels:
+        st.subheader("🏨 Hotels")
+
+        hotels = st.session_state.hotels
+        if hotels:
+            st.dataframe(
+                pd.DataFrame({"Hotel Name": hotels}),
+                use_container_width=True, hide_index=True,
+            )
+        else:
+            st.info("No hotels added yet.")
+
+        st.markdown("---")
+        hcol_add, hcol_del = st.columns(2)
+
+        with hcol_add:
+            st.subheader("➕ Add New Hotel")
+            with st.form("add_hotel_form", clear_on_submit=True):
+                new_hotel_name = st.text_input("Hotel Name", placeholder="e.g. Marina Bay Hotel")
+                add_hotel_btn  = st.form_submit_button("Add Hotel", use_container_width=True)
+
+            if add_hotel_btn:
+                hn = new_hotel_name.strip()
+                if not hn:
+                    st.error("Hotel name cannot be empty.")
+                elif hn in st.session_state.hotels:
+                    st.error("Hotel already exists.")
+                else:
+                    add_hotel_to_db(hn)
+                    st.session_state.hotels = load_hotels_from_db()
+                    st.success(f"Hotel **{hn}** added.")
+                    st.rerun()
+
+        with hcol_del:
+            st.subheader("🗑️ Delete Hotel")
+            st.warning("Deleting a hotel will NOT remove its assessment data.", icon="⚠️")
+            with st.form("del_hotel_form", clear_on_submit=True):
+                del_hotel = st.selectbox(
+                    "Select Hotel to Delete",
+                    hotels if hotels else ["(none)"],
+                    key="del_hotel_sel",
+                )
+                del_hotel_btn = st.form_submit_button("Delete Hotel", type="primary",
+                                                       use_container_width=True)
+
+            if del_hotel_btn and del_hotel != "(none)":
+                delete_hotel_from_db(del_hotel)
+                # Remove from all user hotel_access lists
+                for uname, ud in st.session_state.users.items():
+                    if del_hotel in ud["hotel_access"]:
+                        ud["hotel_access"] = [h for h in ud["hotel_access"] if h != del_hotel]
+                        save_user_to_db(uname, ud)
+                st.session_state.hotels = load_hotels_from_db()
+                st.session_state.users  = load_users_from_db()
+                st.success(f"Hotel **{del_hotel}** deleted.")
+                st.rerun()
+
+    # ── TAB 3 : All Hotel Data ───────────────────────────────────────
     with tab_data:
         st.subheader("All Assessment Records")
         if st.session_state.hotel_data.empty:
@@ -378,8 +468,8 @@ def show_admin_panel():
         else:
             hf = st.multiselect(
                 "Filter by Hotel",
-                ["EDEN Hotel", "Thaala Hotel"],
-                default=["EDEN Hotel", "Thaala Hotel"],
+                st.session_state.hotels,
+                default=st.session_state.hotels,
                 key="adm_hf",
             )
             vdf = st.session_state.hotel_data[
@@ -388,7 +478,7 @@ def show_admin_panel():
             st.dataframe(vdf, use_container_width=True, hide_index=True)
             c1, c2, c3 = st.columns(3)
             c1.metric("Total Records", len(vdf))
-            c2.metric("Total SQM",     f"{vdf['Coverage (SQM)'].sum():,.1f}")
+            c2.metric("Total SQFT",     f"{vdf['Coverage (SQFT)'].sum():,.1f}")
             c3.metric("Hotels",        vdf["Hotel Name"].nunique())
 
         st.markdown("---")
@@ -406,8 +496,8 @@ def show_admin_panel():
         else:
             eh = st.multiselect(
                 "Include Hotels",
-                ["EDEN Hotel", "Thaala Hotel"],
-                default=["EDEN Hotel", "Thaala Hotel"],
+                st.session_state.hotels,
+                default=st.session_state.hotels,
                 key="adm_eh",
             )
             edf = st.session_state.hotel_data[
@@ -455,7 +545,7 @@ def show_assessment():
                     if st.session_state.last_category in cats else 0
             cat   = st.selectbox("Category", cats, index=d_idx)
         with f4:
-            sqm = st.number_input("SQM", min_value=0.0, step=1.0)
+            sqm = st.number_input("SQFT", min_value=0.0, step=1.0)
         with f5:
             st.markdown('<p style="margin-bottom:32px;"></p>', unsafe_allow_html=True)
             submitted = st.form_submit_button("➕ Add", use_container_width=True)
@@ -467,19 +557,22 @@ def show_assessment():
                 "Hotel Name":     [hotel_choice],
                 "Name of Area":   [area_name],
                 "Category":       [cat],
-                "Coverage (SQM)": [sqm],
+                "Coverage (SQFT)": [sqm],
             })
             st.session_state.hotel_data = pd.concat(
                 [st.session_state.hotel_data, new_row], ignore_index=True)
             st.session_state.last_category = cat
             st.rerun()
         else:
-            st.error("Please fill Name of Area and SQM.")
+            st.error("Please fill Name of Area and SQFT.")
 
     st.markdown("---")
 
     hotel_filter = st.sidebar.multiselect(
         "Filter View", hotel_access, default=hotel_access)
+
+    # Refresh hotel list in case admin added new ones
+    st.session_state.hotels = load_hotels_from_db()
 
     if not st.session_state.hotel_data.empty:
         st.subheader("📊 Assessment Inventory")
