@@ -443,7 +443,9 @@ def show_admin_panel():
                         "display_name":  nd or nu_prefix.strip(),
                     }
                     save_users_to_secrets(st.session_state.users)
-                    st.success(f"User **{nu}** created.")
+                    st.session_state.users = load_users_from_db()
+                    st.session_state._dlg_action = None
+                    st.session_state._dlg_target = None
                     st.rerun()
 
         # ── Dialog: Edit User ─────────────────────────────────────────
@@ -470,8 +472,11 @@ def show_admin_panel():
                     updated["role"]          = eu_role
                     updated["tenant_access"] = eu_access
                     st.session_state.users[username] = updated
-                    save_users_to_secrets(st.session_state.users)
-                    st.success(f"User **{username}** updated.")
+                    save_user_to_db(username, updated)
+                    # Reload fresh from DB so grid reflects changes immediately
+                    st.session_state.users = load_users_from_db()
+                    st.session_state._dlg_action = None
+                    st.session_state._dlg_target = None
                     st.rerun()
 
         # ── Dialog: Change Password ───────────────────────────────────
@@ -490,9 +495,12 @@ def show_admin_panel():
                 elif p1 != p2:
                     st.error("Passwords do not match.")
                 else:
-                    st.session_state.users[username]["password_hash"] = hash_pw(p1)
-                    save_users_to_secrets(st.session_state.users)
-                    st.success(f"Password updated for **{username}**.")
+                    updated = dict(st.session_state.users[username])
+                    updated["password_hash"] = hash_pw(p1)
+                    save_user_to_db(username, updated)
+                    st.session_state.users = load_users_from_db()
+                    st.session_state._dlg_action = None
+                    st.session_state._dlg_target = None
                     st.rerun()
 
         # ── Dialog: Delete User ───────────────────────────────────────
@@ -501,11 +509,19 @@ def show_admin_panel():
             st.warning(f"Are you sure you want to delete **{username}**? This cannot be undone.", icon="⚠️")
             c1, c2 = st.columns(2)
             if c1.button("🗑️ Yes, Delete", use_container_width=True, type="primary"):
-                del st.session_state.users[username]
-                save_users_to_secrets(st.session_state.users)
-                st.success(f"User **{username}** deleted.")
+                # Remove from session state
+                if username in st.session_state.users:
+                    del st.session_state.users[username]
+                # Remove from DB
+                delete_user_from_db(username)
+                # Reload fresh from DB
+                st.session_state.users = load_users_from_db()
+                st.session_state._dlg_action = None
+                st.session_state._dlg_target = None
                 st.rerun()
             if c2.button("✖ Cancel", use_container_width=True):
+                st.session_state._dlg_action = None
+                st.session_state._dlg_target = None
                 st.rerun()
 
         # ── Trigger state for dialogs ─────────────────────────────────
@@ -826,11 +842,14 @@ def show_assessment():
     valid_tenant_names = get_tenant_names()
     safe_tenant_access = [t for t in tenant_access if t in valid_tenant_names]
 
-    tenant_filter = st.sidebar.multiselect(
-        "Filter View", valid_tenant_names, default=safe_tenant_access)
-
-    # Refresh hotel list in case admin added new ones
-    # tenants refreshed above
+    f_col, clr_col = st.columns([4, 1])
+    with f_col:
+        tenant_filter = st.multiselect(
+            "Filter View", valid_tenant_names, default=safe_tenant_access,
+            key="assess_filter")
+    with clr_col:
+        st.markdown('<p style="margin-bottom:28px;"></p>', unsafe_allow_html=True)
+        clear_btn = st.button("🗑️ Clear My Data", use_container_width=True)
 
     if not st.session_state.tenant_data.empty:
         st.subheader("📊 Assessment Inventory")
@@ -860,7 +879,7 @@ def show_assessment():
                     mime="application/pdf",
                     use_container_width=True,
                 )
-            if st.sidebar.button("🗑️ Clear My Data", use_container_width=True):
+            if clear_btn:
                 other = st.session_state.tenant_data[
                     ~st.session_state.tenant_data["Tenant Name"].isin(tenant_access)
                 ]
@@ -868,6 +887,172 @@ def show_assessment():
                 st.rerun()
         else:
             st.warning("No data matches the selected filters.")
+
+# ─────────────────────────────────────────────
+# SLIDE PANEL NAV (replaces sidebar)
+# ─────────────────────────────────────────────
+SLIDE_PANEL_CSS = """
+<style>
+/* Hide default Streamlit sidebar entirely */
+[data-testid="stSidebar"] { display: none !important; }
+[data-testid="collapsedControl"] { display: none !important; }
+
+/* Slide panel overlay */
+#slide-overlay {
+    display: none;
+    position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.35);
+    z-index: 998;
+}
+#slide-overlay.open { display: block; }
+
+/* Slide panel */
+#slide-panel {
+    position: fixed; top: 0; left: -300px;
+    width: 280px; height: 100%;
+    background: #1e2a38;
+    color: #fff;
+    z-index: 999;
+    transition: left 0.28s cubic-bezier(.4,0,.2,1);
+    padding: 0;
+    box-shadow: 4px 0 24px rgba(0,0,0,0.25);
+    display: flex; flex-direction: column;
+}
+#slide-panel.open { left: 0; }
+
+.sp-header {
+    background: #141f2b;
+    padding: 24px 20px 18px 20px;
+    border-bottom: 1px solid #2e3f52;
+}
+.sp-header .sp-logo { font-size: 1.05rem; font-weight: 700; color: #7ec8e3; letter-spacing:.5px; }
+.sp-header .sp-user { font-size: 0.85rem; color: #aac4d8; margin-top: 4px; }
+.sp-header .sp-role {
+    display: inline-block; margin-top: 6px;
+    background: #2e4a66; color: #7ec8e3;
+    border-radius: 10px; padding: 1px 10px;
+    font-size: 0.75rem; font-weight: 600;
+}
+
+.sp-nav { flex: 1; padding: 16px 12px; }
+.sp-btn {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; padding: 11px 14px;
+    background: transparent; border: none; border-radius: 8px;
+    color: #c9d8e8; font-size: 0.95rem; font-weight: 500;
+    cursor: pointer; margin-bottom: 4px;
+    transition: background .18s;
+    text-align: left;
+}
+.sp-btn:hover { background: #2e3f52; color: #fff; }
+.sp-btn.active { background: #2563eb; color: #fff; }
+
+.sp-footer {
+    padding: 16px 12px 24px 12px;
+    border-top: 1px solid #2e3f52;
+}
+.sp-logout {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; padding: 11px 14px;
+    background: transparent; border: 1px solid #c0392b;
+    border-radius: 8px; color: #e57373;
+    font-size: 0.92rem; font-weight: 500;
+    cursor: pointer; transition: background .18s;
+    text-align: left;
+}
+.sp-logout:hover { background: #c0392b; color: #fff; }
+
+/* Hamburger toggle button */
+#sp-toggle {
+    position: fixed; top: 14px; left: 14px;
+    z-index: 1000;
+    background: #1e2a38;
+    border: none; border-radius: 8px;
+    padding: 8px 12px; cursor: pointer;
+    color: #fff; font-size: 1.2rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    transition: background .18s;
+}
+#sp-toggle:hover { background: #2563eb; }
+
+/* Push content right when panel open — optional, skip for overlay style */
+body { margin-left: 0 !important; }
+</style>
+"""
+
+def render_slide_panel(display_name, role, active_tab, is_admin):
+    """Render the slide-out navigation panel via HTML + Streamlit form buttons."""
+    st.markdown(SLIDE_PANEL_CSS, unsafe_allow_html=True)
+
+    panel_html = f"""
+    <button id="sp-toggle" onclick="togglePanel()">&#9776;</button>
+
+    <div id="slide-overlay" onclick="closePanel()"></div>
+
+    <div id="slide-panel" id="slide-panel">
+        <div class="sp-header">
+            <div class="sp-logo">🏢 Dexxora Virtual360</div>
+            <div class="sp-user">👤 {display_name}</div>
+            <div class="sp-role">{'Admin' if role == 'admin' else 'User'}</div>
+        </div>
+        <div class="sp-nav" id="sp-nav-content">
+    """
+
+    if is_admin:
+        panel_html += f"""
+            <button class="sp-btn {'active' if active_tab == 'assessment' else ''}"
+                    onclick="navClick('assessment')">🏢 Assessment</button>
+            <button class="sp-btn {'active' if active_tab == 'admin' else ''}"
+                    onclick="navClick('admin')">⚙️ Admin Panel</button>
+        """
+
+    panel_html += """
+        </div>
+        <div class="sp-footer">
+            <button class="sp-logout" onclick="navClick('logout')">🚪 Logout</button>
+        </div>
+    </div>
+
+    <script>
+    function togglePanel() {
+        document.getElementById('slide-panel').classList.toggle('open');
+        document.getElementById('slide-overlay').classList.toggle('open');
+    }
+    function closePanel() {
+        document.getElementById('slide-panel').classList.remove('open');
+        document.getElementById('slide-overlay').classList.remove('open');
+    }
+    function navClick(action) {
+        closePanel();
+        // Set a hidden input value and submit via Streamlit query param trick
+        const url = new URL(window.location);
+        url.searchParams.set('nav', action);
+        window.location.href = url.toString();
+    }
+    // Auto-open on load if panel was triggered
+    </script>
+    """
+    st.markdown(panel_html, unsafe_allow_html=True)
+
+    # Read nav action from query params
+    params = st.query_params
+    nav = params.get("nav", None)
+    if nav:
+        st.query_params.clear()
+        if nav == "logout":
+            st.session_state.logged_in    = False
+            st.session_state.current_user = None
+            st.session_state.current_role = None
+            st.session_state.active_tab   = "assessment"
+            st.rerun()
+        elif nav in ("assessment", "admin") and is_admin:
+            st.session_state.active_tab = nav
+            st.rerun()
+        elif nav == "assessment":
+            st.session_state.active_tab = "assessment"
+            st.rerun()
+
 
 # ─────────────────────────────────────────────
 # MAIN SHELL
@@ -878,28 +1063,15 @@ else:
     ud       = st.session_state.users[st.session_state.current_user]
     is_admin = st.session_state.current_role == "admin"
 
-    with st.sidebar:
-        st.markdown(f"### 👤 {ud['display_name']}")
-        st.markdown(f"*Role: {'Admin' if is_admin else 'User'}*")
-        st.markdown("---")
+    # Add top padding so hamburger button doesn't overlap content
+    st.markdown("<div style='height:50px'></div>", unsafe_allow_html=True)
 
-        if is_admin:
-            if st.button("🏢 Assessment", use_container_width=True,
-                         type="primary" if st.session_state.active_tab == "assessment" else "secondary"):
-                st.session_state.active_tab = "assessment"
-                st.rerun()
-            if st.button("⚙️ Admin Panel", use_container_width=True,
-                         type="primary" if st.session_state.active_tab == "admin" else "secondary"):
-                st.session_state.active_tab = "admin"
-                st.rerun()
-            st.markdown("---")
-
-        if st.button("🚪 Logout", use_container_width=True):
-            st.session_state.logged_in    = False
-            st.session_state.current_user = None
-            st.session_state.current_role = None
-            st.session_state.active_tab   = "assessment"
-            st.rerun()
+    render_slide_panel(
+        display_name=ud["display_name"],
+        role=st.session_state.current_role,
+        active_tab=st.session_state.active_tab,
+        is_admin=is_admin,
+    )
 
     if is_admin and st.session_state.active_tab == "admin":
         show_admin_panel()
