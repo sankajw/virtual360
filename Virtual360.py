@@ -400,25 +400,12 @@ def show_admin_panel():
 
     # ── TAB 1 : User Management ──────────────────────────────────────
     with tab_users:
-        st.subheader("Current Users")
-        st.dataframe(
-            pd.DataFrame([{
-                "Username":     u,
-                "Display Name": d["display_name"],
-                "Role":         d["role"].capitalize(),
-                "Tenant Access": ", ".join(d["tenant_access"]),
-            } for u, d in st.session_state.users.items()]),
-            use_container_width=True, hide_index=True,
-        )
+        DOMAIN = "@dexxora360"
 
-        st.markdown("---")
-        col_add, col_edit, col_manage = st.columns(3)
-
-        # ── Add User ─────────────────────────────────────────────────
-        with col_add:
-            st.subheader("➕ Add New User")
-            DOMAIN = "@dexxora360"
-            with st.form("add_user_form", clear_on_submit=True):
+        # ── Dialog: Add New User ──────────────────────────────────────
+        @st.dialog("➕ Add New User")
+        def dialog_add_user():
+            with st.form("dlg_add_user_form", clear_on_submit=True):
                 nu_col, nu_suf = st.columns([3, 2])
                 with nu_col:
                     nu_prefix = st.text_input("Username")
@@ -429,15 +416,15 @@ def show_admin_panel():
                         f"font-size:0.9rem;text-align:center;'>{DOMAIN}</div>",
                         unsafe_allow_html=True,
                     )
-                nd   = st.text_input("Display Name")
-                nr   = st.selectbox("Role", ["user", "admin"])
-                nh   = st.multiselect("Tenant Access",
-                                      get_tenant_names(),
-                                      default=get_tenant_names()[:1])
-                np1  = st.text_input("Password",         type="password")
-                np2  = st.text_input("Confirm Password", type="password")
-                add  = st.form_submit_button("Add User", use_container_width=True)
-
+                nd  = st.text_input("Display Name")
+                nr  = st.selectbox("Role", ["user", "admin"])
+                nh  = st.multiselect("Tenant Access", get_tenant_names(),
+                                     default=get_tenant_names()[:1])
+                np1 = st.text_input("Password",         type="password")
+                np2 = st.text_input("Confirm Password", type="password")
+                c1, c2 = st.columns(2)
+                add = c1.form_submit_button("✅ Add User",    use_container_width=True, type="primary")
+                c2.form_submit_button(      "✖ Cancel",       use_container_width=True)
             if add:
                 nu = (nu_prefix.strip() + DOMAIN) if nu_prefix.strip() else ""
                 if not nu_prefix.strip() or not np1:
@@ -459,64 +446,128 @@ def show_admin_panel():
                     st.success(f"User **{nu}** created.")
                     st.rerun()
 
-        # ── Edit User (all fields except username) ────────────────────
-        with col_edit:
-            st.subheader("✏️ Edit User")
-            all_users    = list(st.session_state.users.keys())
+        # ── Dialog: Edit User ─────────────────────────────────────────
+        @st.dialog("✏️ Edit User")
+        def dialog_edit_user(username):
+            ud            = st.session_state.users.get(username, {})
             valid_tenants = get_tenant_names()
-            with st.form("edit_user_form", clear_on_submit=False):
-                eu = st.selectbox("Select User", all_users, key="eu_sel")
-                eu_data     = st.session_state.users.get(eu, {})
-                eu_dname    = st.text_input("Display Name",
-                                            value=eu_data.get("display_name", ""),
-                                            key="eu_dname")
-                eu_role     = st.selectbox("Role", ["user", "admin"],
-                                           index=0 if eu_data.get("role") == "user" else 1,
-                                           key="eu_role")
-                eu_cur_acc  = eu_data.get("tenant_access", [])
-                eu_safe_acc = [a for a in eu_cur_acc if a in valid_tenants]
-                eu_access   = st.multiselect("Tenant Access", valid_tenants,
-                                             default=eu_safe_acc, key="eu_access")
-                st.markdown("**Change Password** *(leave blank to keep current)*")
-                eu_pw1 = st.text_input("New Password",     type="password", key="eu_pw1")
-                eu_pw2 = st.text_input("Confirm Password", type="password", key="eu_pw2")
-                edit_btn = st.form_submit_button("Save Changes", use_container_width=True)
-
-            if edit_btn:
+            safe_acc      = [a for a in ud.get("tenant_access", []) if a in valid_tenants]
+            with st.form("dlg_edit_form", clear_on_submit=False):
+                st.markdown(f"**Username:** `{username}`")
+                eu_dname  = st.text_input("Display Name", value=ud.get("display_name", ""))
+                eu_role   = st.selectbox("Role", ["user", "admin"],
+                                         index=0 if ud.get("role") == "user" else 1)
+                eu_access = st.multiselect("Tenant Access", valid_tenants, default=safe_acc)
+                c1, c2 = st.columns(2)
+                save = c1.form_submit_button("✅ Save", use_container_width=True, type="primary")
+                c2.form_submit_button(       "✖ Cancel", use_container_width=True)
+            if save:
                 if not eu_access:
                     st.error("Select at least one tenant.")
-                elif eu_pw1 and eu_pw1 != eu_pw2:
-                    st.error("Passwords do not match.")
                 else:
-                    updated = dict(st.session_state.users[eu])
-                    updated["display_name"]  = eu_dname.strip() or eu
+                    updated = dict(st.session_state.users[username])
+                    updated["display_name"]  = eu_dname.strip() or username
                     updated["role"]          = eu_role
                     updated["tenant_access"] = eu_access
-                    if eu_pw1:
-                        updated["password_hash"] = hash_pw(eu_pw1)
-                    st.session_state.users[eu] = updated
+                    st.session_state.users[username] = updated
                     save_users_to_secrets(st.session_state.users)
-                    st.success(f"User **{eu}** updated.")
+                    st.success(f"User **{username}** updated.")
                     st.rerun()
 
-        # ── Delete User ───────────────────────────────────────────────
-        with col_manage:
-            st.subheader("🗑️ Delete User")
-            deletable = [u for u in st.session_state.users
-                         if u != st.session_state.current_user]
-            with st.form("del_user_form", clear_on_submit=True):
-                du  = st.selectbox("Select User to Delete",
-                                   deletable if deletable else ["(none)"], key="su_del")
-                db  = st.form_submit_button("Delete User", type="primary",
-                                            use_container_width=True)
+        # ── Dialog: Change Password ───────────────────────────────────
+        @st.dialog("🔑 Change Password")
+        def dialog_change_pw(username):
+            st.markdown(f"**Username:** `{username}`")
+            with st.form("dlg_pw_form", clear_on_submit=True):
+                p1 = st.text_input("New Password",     type="password")
+                p2 = st.text_input("Confirm Password", type="password")
+                c1, c2 = st.columns(2)
+                save = c1.form_submit_button("✅ Update", use_container_width=True, type="primary")
+                c2.form_submit_button(       "✖ Cancel",  use_container_width=True)
+            if save:
+                if not p1:
+                    st.error("Password cannot be empty.")
+                elif p1 != p2:
+                    st.error("Passwords do not match.")
+                else:
+                    st.session_state.users[username]["password_hash"] = hash_pw(p1)
+                    save_users_to_secrets(st.session_state.users)
+                    st.success(f"Password updated for **{username}**.")
+                    st.rerun()
 
-            if db and du != "(none)":
-                del st.session_state.users[du]
+        # ── Dialog: Delete User ───────────────────────────────────────
+        @st.dialog("🗑️ Delete User")
+        def dialog_delete_user(username):
+            st.warning(f"Are you sure you want to delete **{username}**? This cannot be undone.", icon="⚠️")
+            c1, c2 = st.columns(2)
+            if c1.button("🗑️ Yes, Delete", use_container_width=True, type="primary"):
+                del st.session_state.users[username]
                 save_users_to_secrets(st.session_state.users)
-                st.success(f"User **{du}** deleted.")
+                st.success(f"User **{username}** deleted.")
+                st.rerun()
+            if c2.button("✖ Cancel", use_container_width=True):
                 st.rerun()
 
+        # ── Trigger state for dialogs ─────────────────────────────────
+        for key in ["_dlg_action", "_dlg_target"]:
+            if key not in st.session_state:
+                st.session_state[key] = None
 
+        # ── Toolbar: Add New button ───────────────────────────────────
+        btn_col, _ = st.columns([1, 5])
+        if btn_col.button("➕ Add New User", type="primary", use_container_width=True):
+            st.session_state._dlg_action = "add"
+            st.session_state._dlg_target = None
+
+        st.markdown("---")
+
+        # ── User Grid ────────────────────────────────────────────────
+        users_list = list(st.session_state.users.items())
+        if not users_list:
+            st.info("No users found.")
+        else:
+            # Header row
+            hc = st.columns([2.5, 2, 1.5, 2.5, 2])
+            for col, label in zip(hc, ["Username", "Display Name", "Role", "Tenant Access", "Actions"]):
+                col.markdown(f"**{label}**")
+            st.markdown("<hr style='margin:4px 0 8px 0;'>", unsafe_allow_html=True)
+
+            for uname, ud in users_list:
+                rc = st.columns([2.5, 2, 1.5, 2.5, 2])
+                rc[0].markdown(f"`{uname}`")
+                rc[1].markdown(ud["display_name"])
+                badge_color = "#2E7D32" if ud["role"] == "admin" else "#1565C0"
+                rc[2].markdown(
+                    f"<span style='background:{badge_color};color:white;padding:2px 10px;"
+                    f"border-radius:12px;font-size:0.8rem;'>{ud['role'].capitalize()}</span>",
+                    unsafe_allow_html=True,
+                )
+                rc[3].markdown(", ".join(ud["tenant_access"]) or "—")
+
+                # Action buttons
+                ab1, ab2, ab3 = rc[4].columns(3)
+                if ab1.button("✏️", key=f"edit_{uname}", help="Edit user"):
+                    st.session_state._dlg_action = "edit"
+                    st.session_state._dlg_target = uname
+                if ab2.button("🔑", key=f"pw_{uname}", help="Change password"):
+                    st.session_state._dlg_action = "pw"
+                    st.session_state._dlg_target = uname
+                if uname != st.session_state.current_user:
+                    if ab3.button("🗑️", key=f"del_{uname}", help="Delete user"):
+                        st.session_state._dlg_action = "delete"
+                        st.session_state._dlg_target = uname
+
+        # ── Open correct dialog based on action state ─────────────────
+        action = st.session_state._dlg_action
+        target = st.session_state._dlg_target
+        if action == "add":
+            dialog_add_user()
+        elif action == "edit" and target:
+            dialog_edit_user(target)
+        elif action == "pw" and target:
+            dialog_change_pw(target)
+        elif action == "delete" and target:
+            dialog_delete_user(target)
 
     # ── TAB 2 : Tenant Management ─────────────────────────────────────
     with tab_tenants:
