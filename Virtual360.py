@@ -897,10 +897,14 @@ NAV_PANEL_JS = """
 <script>
 (function() {
     var doc = window.parent.document;
+
+    // Clean up previous elements on re-run
     ["__np_style","__np_rail","__np_topbar"].forEach(function(id){
         var el = doc.getElementById(id);
         if (el) el.parentNode.removeChild(el);
     });
+
+    // ── Styles ──────────────────────────────────────────────────────
     var style = doc.createElement("style");
     style.id = "__np_style";
     style.textContent =
@@ -908,58 +912,71 @@ NAV_PANEL_JS = """
         ".block-container{padding-top:3.2rem!important}" +
         "[data-testid='stAppViewContainer']>section[data-testid='stMain']{margin-left:52px!important}" +
         "#__np_rail{position:fixed;top:0;left:0;width:52px;height:100vh;background:#1a2535;" +
-        "display:flex;flex-direction:column;align-items:center;z-index:9999;overflow:hidden;" +
-        "transition:width .22s cubic-bezier(.4,0,.2,1);box-shadow:2px 0 12px rgba(0,0,0,.22)}" +
+          "display:flex;flex-direction:column;align-items:center;z-index:9999;overflow:hidden;" +
+          "transition:width .22s cubic-bezier(.4,0,.2,1);box-shadow:2px 0 14px rgba(0,0,0,.3)}" +
         "#__np_rail:hover{width:210px}" +
         ".np-logo-strip{width:100%;padding:13px 0 11px;display:flex;align-items:center;" +
-        "border-bottom:1px solid #2e3f52;min-height:52px;overflow:hidden}" +
+          "border-bottom:1px solid #2e3f52;min-height:52px;overflow:hidden;cursor:default}" +
         ".np-logo-icon{min-width:52px;text-align:center;font-size:1.2rem;line-height:1}" +
-        ".np-logo-text{white-space:nowrap;overflow:hidden;color:#7ec8e3;font-size:.76rem;" +
-        "font-weight:700;opacity:0;transition:opacity .14s .04s}" +
+        ".np-logo-text{white-space:nowrap;color:#7ec8e3;font-size:.76rem;font-weight:700;" +
+          "opacity:0;transition:opacity .14s .04s}" +
         "#__np_rail:hover .np-logo-text{opacity:1}" +
         ".np-nav{flex:1;width:100%;padding:8px 0}" +
         ".np-item{display:flex;align-items:center;width:100%;padding:11px 0;" +
-        "background:transparent;border:none;cursor:pointer;color:#9ab0c8;" +
-        "overflow:hidden;transition:background .14s,color .14s}" +
+          "background:transparent;border:none;cursor:pointer;color:#9ab0c8;" +
+          "overflow:hidden;transition:background .14s,color .14s}" +
         ".np-item:hover{background:#243448;color:#fff}" +
         ".np-item.np-active{background:#2563eb;color:#fff}" +
         ".np-item.np-active:hover{background:#1d50c8}" +
-        ".np-icon{min-width:52px;text-align:center;font-size:1.1rem;line-height:1}" +
+        ".np-icon{min-width:52px;text-align:center;font-size:1.1rem;line-height:1;pointer-events:none}" +
         ".np-label{white-space:nowrap;overflow:hidden;font-size:.87rem;font-weight:500;" +
-        "opacity:0;transition:opacity .1s .03s}" +
+          "opacity:0;transition:opacity .1s .03s;pointer-events:none}" +
         "#__np_rail:hover .np-label{opacity:1}" +
         ".np-footer{width:100%;padding:8px 0 14px;border-top:1px solid #2e3f52}" +
         ".np-logout{display:flex;align-items:center;width:100%;padding:11px 0;" +
-        "background:transparent;border:none;cursor:pointer;color:#e57373;" +
-        "overflow:hidden;transition:background .14s}" +
+          "background:transparent;border:none;cursor:pointer;color:#e57373;" +
+          "overflow:hidden;transition:background .14s}" +
         ".np-logout:hover{background:#c0392b;color:#fff}" +
         "#__np_topbar{position:fixed;top:10px;right:16px;display:flex;align-items:center;" +
-        "gap:7px;z-index:9999}" +
+          "gap:7px;z-index:9999}" +
         ".np-avatar{width:32px;height:32px;border-radius:50%;background:#2563eb;" +
-        "display:flex;align-items:center;justify-content:center;color:#fff;" +
-        "font-weight:700;font-size:.88rem;box-shadow:0 2px 7px rgba(0,0,0,.25)}" +
+          "display:flex;align-items:center;justify-content:center;color:#fff;" +
+          "font-weight:700;font-size:.88rem;box-shadow:0 2px 7px rgba(0,0,0,.25)}" +
         ".np-userinfo{background:#1a2535;border:1px solid #2e3f52;border-radius:20px;" +
-        "padding:3px 12px 3px 8px;display:flex;align-items:center;gap:6px}" +
+          "padding:3px 12px 3px 8px;display:flex;align-items:center;gap:6px}" +
         ".np-uname{color:#c9d8e8;font-size:.8rem;font-weight:600;white-space:nowrap}" +
         ".np-urole{background:#2e4a66;color:#7ec8e3;border-radius:10px;padding:1px 7px;" +
-        "font-size:.68rem;font-weight:700;white-space:nowrap}";
+          "font-size:.68rem;font-weight:700;white-space:nowrap}";
     doc.head.appendChild(style);
 
+    // ── Rail ─────────────────────────────────────────────────────────
     var rail = doc.createElement("div");
     rail.id = "__np_rail";
     rail.innerHTML = NAV_DATA;
     doc.body.appendChild(rail);
 
+    // ── Top bar ───────────────────────────────────────────────────────
     var topbar = doc.createElement("div");
     topbar.id = "__np_topbar";
     topbar.innerHTML = TOPBAR_DATA;
     doc.body.appendChild(topbar);
 
-    doc.__npNav = function(action){
-        var url = new URL(doc.location);
+    // ── Click handler via event delegation ───────────────────────────
+    // Use data-nav attribute on buttons — no inline onclick needed
+    rail.addEventListener("click", function(e) {
+        var btn = e.target;
+        // Walk up in case click landed on icon/label span
+        while (btn && btn !== rail) {
+            if (btn.dataset && btn.dataset.nav) break;
+            btn = btn.parentElement;
+        }
+        if (!btn || !btn.dataset || !btn.dataset.nav) return;
+
+        var action = btn.dataset.nav;
+        var url = new URL(doc.location.href);
         url.searchParams.set("nav", action);
         doc.location.href = url.toString();
-    };
+    });
 })();
 </script>
 """
@@ -974,33 +991,39 @@ def render_nav_panel(display_name, role, active_tab, is_admin):
 
     if is_admin:
         nav_items = (
-            f'<button class="np-item {active_assess}" onclick="document.__npNav(\'assessment\')">'
-            '<span class="np-icon">&#127970;</span><span class="np-label">Assessment</span></button>'
-            f'<button class="np-item {active_admin}" onclick="document.__npNav(\'admin\')">'
-            '<span class="np-icon">&#9881;&#65039;</span><span class="np-label">Admin Panel</span></button>'
+            f'<button class="np-item {active_assess}" data-nav="assessment">'
+            '<span class="np-icon">&#127970;</span>'
+            '<span class="np-label">Assessment</span></button>'
+            f'<button class="np-item {active_admin}" data-nav="admin">'
+            '<span class="np-icon">&#9881;&#65039;</span>'
+            '<span class="np-label">Admin Panel</span></button>'
         )
     else:
         nav_items = (
-            '<button class="np-item np-active" onclick="document.__npNav(\'assessment\')">'
-            '<span class="np-icon">&#127970;</span><span class="np-label">Assessment</span></button>'
+            '<button class="np-item np-active" data-nav="assessment">'
+            '<span class="np-icon">&#127970;</span>'
+            '<span class="np-label">Assessment</span></button>'
         )
 
     rail_inner = (
         '<div class="np-logo-strip">'
-        '<span class="np-logo-icon">&#127959;</span>'
-        '<span class="np-logo-text">Dexxora V360</span></div>'
+          '<span class="np-logo-icon">&#127959;</span>'
+          '<span class="np-logo-text">Dexxora V360</span>'
+        '</div>'
         f'<div class="np-nav">{nav_items}</div>'
         '<div class="np-footer">'
-        '<button class="np-logout" onclick="document.__npNav(\'logout\')">'
-        '<span class="np-icon">&#128682;</span><span class="np-label">Logout</span></button>'
+          '<button class="np-logout" data-nav="logout">'
+            '<span class="np-icon">&#128682;</span>'
+            '<span class="np-label">Logout</span>'
+          '</button>'
         '</div>'
     )
 
     topbar_inner = (
         '<div class="np-userinfo">'
-        f'<div class="np-avatar">{avatar_letter}</div>'
-        f'<span class="np-uname">{short_name}</span>'
-        f'<span class="np-urole">{role_label}</span>'
+          f'<div class="np-avatar">{avatar_letter}</div>'
+          f'<span class="np-uname">{short_name}</span>'
+          f'<span class="np-urole">{role_label}</span>'
         '</div>'
     )
 
@@ -1013,6 +1036,7 @@ def render_nav_panel(display_name, role, active_tab, is_admin):
 
     components.html(js, height=0, scrolling=False)
 
+    # Handle query-param navigation triggered by rail clicks
     nav = st.query_params.get("nav", None)
     if nav:
         st.query_params.clear()
