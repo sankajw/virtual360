@@ -36,16 +36,17 @@ def get_db():
 
 def init_db():
     """
-    Create tables if they don't exist, then seed from st.secrets / defaults.
-    Only seeds on the very first run (empty tables).
+    Create tables if they don't exist, run any schema migrations,
+    then seed from st.secrets / defaults on first run.
     """
     with get_db() as conn:
+        # ── Create tables ────────────────────────────────────────────
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 username      TEXT PRIMARY KEY,
                 display_name  TEXT NOT NULL,
                 role          TEXT NOT NULL,
-                tenant_access  TEXT NOT NULL,
+                tenant_access TEXT NOT NULL,
                 password_hash TEXT NOT NULL
             )
         """)
@@ -57,14 +58,33 @@ def init_db():
         """)
         conn.commit()
 
-        # Seed tenants
+        # ── Migrations ───────────────────────────────────────────────
+        # 1. Rename hotel_access → tenant_access in users table if old column exists
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+        if "hotel_access" in cols and "tenant_access" not in cols:
+            conn.execute("ALTER TABLE users RENAME COLUMN hotel_access TO tenant_access")
+            conn.commit()
+
+        # 2. Add tenant_type to tenants if missing (older DB without it)
+        tcols = [r[1] for r in conn.execute("PRAGMA table_info(tenants)").fetchall()]
+        if "tenant_type" not in tcols:
+            conn.execute("ALTER TABLE tenants ADD COLUMN tenant_type TEXT NOT NULL DEFAULT 'Commercial'")
+            conn.commit()
+
+        # 3. Rename hotel_name → tenant_name in tenants table if old column exists
+        tcols2 = [r[1] for r in conn.execute("PRAGMA table_info(tenants)").fetchall()]
+        if "hotel_name" in tcols2 and "tenant_name" not in tcols2:
+            conn.execute("ALTER TABLE tenants RENAME COLUMN hotel_name TO tenant_name")
+            conn.commit()
+
+        # ── Seed tenants ─────────────────────────────────────────────
         tcount = conn.execute("SELECT COUNT(*) FROM tenants").fetchone()[0]
         if tcount == 0:
             for name, ttype in [("EDEN Tenant", "Residential"), ("Thaala Tenant", "Commercial")]:
                 conn.execute("INSERT OR IGNORE INTO tenants VALUES (?,?)", (name, ttype))
             conn.commit()
 
-        # Seed users
+        # ── Seed users ───────────────────────────────────────────────
         ucount = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         if ucount == 0:
             for uname, ud in _get_seed_users().items():
@@ -143,11 +163,13 @@ def load_users_from_db() -> dict:
     """Load all users from the /tmp SQLite database into a plain dict."""
     with get_db() as conn:
         rows = conn.execute("SELECT * FROM users").fetchall()
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+    access_col = "tenant_access" if "tenant_access" in cols else "hotel_access"
     return {
         row["username"]: {
             "display_name":  row["display_name"],
             "role":          row["role"],
-            "tenant_access":  json.loads(row["tenant_access"]),
+            "tenant_access": json.loads(row[access_col]),
             "password_hash": row["password_hash"],
         }
         for row in rows
