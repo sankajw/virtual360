@@ -889,166 +889,136 @@ def show_assessment():
             st.warning("No data matches the selected filters.")
 
 # ─────────────────────────────────────────────
-# SLIDE PANEL NAV (replaces sidebar)
 # ─────────────────────────────────────────────
-SLIDE_PANEL_CSS = """
-<style>
-/* Remove Streamlit default top padding and sidebar */
-[data-testid="stSidebar"] { display: none !important; }
-[data-testid="collapsedControl"] { display: none !important; }
-section[data-testid="stMain"] > div:first-child { padding-top: 1rem !important; }
-.block-container { padding-top: 1.5rem !important; }
-</style>
-"""
+# ICON RAIL NAV + TOP-RIGHT USER BADGE
+# ─────────────────────────────────────────────
 
-SLIDE_PANEL_HTML = """
+NAV_PANEL_JS = """
 <script>
 (function() {
-    // Inject into parent window so fixed positioning works correctly
-    var parent = window.parent.document;
-
-    // Remove existing panel if re-running
-    ['__sp_toggle','__sp_overlay','__sp_panel','__sp_style'].forEach(function(id){
-        var el = parent.getElementById(id);
+    var doc = window.parent.document;
+    ["__np_style","__np_rail","__np_topbar"].forEach(function(id){
+        var el = doc.getElementById(id);
         if (el) el.parentNode.removeChild(el);
     });
+    var style = doc.createElement("style");
+    style.id = "__np_style";
+    style.textContent =
+        "[data-testid='stSidebar'],[data-testid='collapsedControl']{display:none!important}" +
+        ".block-container{padding-top:3.2rem!important}" +
+        "[data-testid='stAppViewContainer']>section[data-testid='stMain']{margin-left:52px!important}" +
+        "#__np_rail{position:fixed;top:0;left:0;width:52px;height:100vh;background:#1a2535;" +
+        "display:flex;flex-direction:column;align-items:center;z-index:9999;overflow:hidden;" +
+        "transition:width .22s cubic-bezier(.4,0,.2,1);box-shadow:2px 0 12px rgba(0,0,0,.22)}" +
+        "#__np_rail:hover{width:210px}" +
+        ".np-logo-strip{width:100%;padding:13px 0 11px;display:flex;align-items:center;" +
+        "border-bottom:1px solid #2e3f52;min-height:52px;overflow:hidden}" +
+        ".np-logo-icon{min-width:52px;text-align:center;font-size:1.2rem;line-height:1}" +
+        ".np-logo-text{white-space:nowrap;overflow:hidden;color:#7ec8e3;font-size:.76rem;" +
+        "font-weight:700;opacity:0;transition:opacity .14s .04s}" +
+        "#__np_rail:hover .np-logo-text{opacity:1}" +
+        ".np-nav{flex:1;width:100%;padding:8px 0}" +
+        ".np-item{display:flex;align-items:center;width:100%;padding:11px 0;" +
+        "background:transparent;border:none;cursor:pointer;color:#9ab0c8;" +
+        "overflow:hidden;transition:background .14s,color .14s}" +
+        ".np-item:hover{background:#243448;color:#fff}" +
+        ".np-item.np-active{background:#2563eb;color:#fff}" +
+        ".np-item.np-active:hover{background:#1d50c8}" +
+        ".np-icon{min-width:52px;text-align:center;font-size:1.1rem;line-height:1}" +
+        ".np-label{white-space:nowrap;overflow:hidden;font-size:.87rem;font-weight:500;" +
+        "opacity:0;transition:opacity .1s .03s}" +
+        "#__np_rail:hover .np-label{opacity:1}" +
+        ".np-footer{width:100%;padding:8px 0 14px;border-top:1px solid #2e3f52}" +
+        ".np-logout{display:flex;align-items:center;width:100%;padding:11px 0;" +
+        "background:transparent;border:none;cursor:pointer;color:#e57373;" +
+        "overflow:hidden;transition:background .14s}" +
+        ".np-logout:hover{background:#c0392b;color:#fff}" +
+        "#__np_topbar{position:fixed;top:10px;right:16px;display:flex;align-items:center;" +
+        "gap:7px;z-index:9999}" +
+        ".np-avatar{width:32px;height:32px;border-radius:50%;background:#2563eb;" +
+        "display:flex;align-items:center;justify-content:center;color:#fff;" +
+        "font-weight:700;font-size:.88rem;box-shadow:0 2px 7px rgba(0,0,0,.25)}" +
+        ".np-userinfo{background:#1a2535;border:1px solid #2e3f52;border-radius:20px;" +
+        "padding:3px 12px 3px 8px;display:flex;align-items:center;gap:6px}" +
+        ".np-uname{color:#c9d8e8;font-size:.8rem;font-weight:600;white-space:nowrap}" +
+        ".np-urole{background:#2e4a66;color:#7ec8e3;border-radius:10px;padding:1px 7px;" +
+        "font-size:.68rem;font-weight:700;white-space:nowrap}";
+    doc.head.appendChild(style);
 
-    // Styles
-    var style = parent.createElement('style');
-    style.id = '__sp_style';
-    style.textContent = `
-        #__sp_toggle {
-            position: fixed; top: 12px; left: 12px; z-index: 99999;
-            background: #1e2a38; border: none; border-radius: 8px;
-            padding: 7px 13px; cursor: pointer; color: #fff;
-            font-size: 1.3rem; box-shadow: 0 2px 10px rgba(0,0,0,.35);
-            transition: background .18s; line-height:1;
-        }
-        #__sp_toggle:hover { background: #2563eb; }
-        #__sp_overlay {
-            display: none; position: fixed; inset: 0;
-            background: rgba(0,0,0,.4); z-index: 99998;
-        }
-        #__sp_panel {
-            position: fixed; top: 0; left: -300px; width: 270px; height: 100%;
-            background: #1e2a38; color: #fff; z-index: 99999;
-            transition: left .28s cubic-bezier(.4,0,.2,1);
-            display: flex; flex-direction: column;
-            box-shadow: 4px 0 24px rgba(0,0,0,.3);
-        }
-        #__sp_panel.sp-open { left: 0; }
-        #__sp_overlay.sp-open { display: block; }
-        .sp-hdr { background:#141f2b; padding:22px 18px 16px; border-bottom:1px solid #2e3f52; }
-        .sp-logo { font-size:.98rem; font-weight:700; color:#7ec8e3; }
-        .sp-user { font-size:.82rem; color:#aac4d8; margin-top:4px; }
-        .sp-role { display:inline-block; margin-top:6px; background:#2e4a66; color:#7ec8e3;
-                   border-radius:10px; padding:1px 10px; font-size:.73rem; font-weight:600; }
-        .sp-nav { flex:1; padding:14px 10px; }
-        .sp-nb {
-            display:flex; align-items:center; gap:9px; width:100%;
-            padding:10px 13px; background:transparent; border:none;
-            border-radius:7px; color:#c9d8e8; font-size:.93rem; font-weight:500;
-            cursor:pointer; margin-bottom:3px; transition:background .16s; text-align:left;
-        }
-        .sp-nb:hover { background:#2e3f52; color:#fff; }
-        .sp-nb.sp-active { background:#2563eb; color:#fff; }
-        .sp-ftr { padding:14px 10px 22px; border-top:1px solid #2e3f52; }
-        .sp-logout {
-            display:flex; align-items:center; gap:9px; width:100%;
-            padding:10px 13px; background:transparent;
-            border:1px solid #c0392b; border-radius:7px;
-            color:#e57373; font-size:.9rem; font-weight:500;
-            cursor:pointer; transition:background .16s; text-align:left;
-        }
-        .sp-logout:hover { background:#c0392b; color:#fff; }
-    `;
-    parent.head.appendChild(style);
+    var rail = doc.createElement("div");
+    rail.id = "__np_rail";
+    rail.innerHTML = NAV_DATA;
+    doc.body.appendChild(rail);
 
-    // Hamburger button
-    var toggle = parent.createElement('button');
-    toggle.id = '__sp_toggle';
-    toggle.innerHTML = '&#9776;';
-    toggle.onclick = function(){ openPanel(); };
-    parent.body.appendChild(toggle);
+    var topbar = doc.createElement("div");
+    topbar.id = "__np_topbar";
+    topbar.innerHTML = TOPBAR_DATA;
+    doc.body.appendChild(topbar);
 
-    // Overlay
-    var overlay = parent.createElement('div');
-    overlay.id = '__sp_overlay';
-    overlay.onclick = function(){ closePanel(); };
-    parent.body.appendChild(overlay);
-
-    // Panel — content injected by Python via SP_CONTENT placeholder
-    var panel = parent.createElement('div');
-    panel.id = '__sp_panel';
-    panel.innerHTML = SP_CONTENT;
-    parent.body.appendChild(panel);
-
-    function openPanel(){
-        panel.classList.add('sp-open');
-        overlay.classList.add('sp-open');
-    }
-    function closePanel(){
-        panel.classList.remove('sp-open');
-        overlay.classList.remove('sp-open');
-    }
-    window._spClose = closePanel;
-
-    // Nav click: set query param and navigate
-    parent.__spNav = function(action){
-        closePanel();
-        var url = new URL(parent.location);
-        url.searchParams.set('nav', action);
-        parent.location.href = url.toString();
+    doc.__npNav = function(action){
+        var url = new URL(doc.location);
+        url.searchParams.set("nav", action);
+        doc.location.href = url.toString();
     };
 })();
 </script>
 """
 
 
-def render_slide_panel(display_name, role, active_tab, is_admin):
-    """Inject the slide-out nav panel into the parent page via JS."""
-    # Build panel inner HTML
-    admin_links = ""
+def render_nav_panel(display_name, role, active_tab, is_admin):
+    active_assess = "np-active" if active_tab == "assessment" else ""
+    active_admin  = "np-active" if active_tab == "admin"      else ""
+    role_label    = "Admin" if role == "admin" else "User"
+    avatar_letter = display_name[0].upper() if display_name else "U"
+    short_name    = display_name.split("@")[0] if "@" in display_name else display_name
+
     if is_admin:
-        a_active  = "sp-active" if active_tab == "assessment" else ""
-        adm_active = "sp-active" if active_tab == "admin" else ""
-        admin_links = f"""
-        <button class="sp-nb {a_active}"   onclick="parent.__spNav('assessment')">🏢 Assessment</button>
-        <button class="sp-nb {adm_active}" onclick="parent.__spNav('admin')">⚙️ Admin Panel</button>
-        """
+        nav_items = (
+            f'<button class="np-item {active_assess}" onclick="document.__npNav(\'assessment\')">'
+            '<span class="np-icon">&#127970;</span><span class="np-label">Assessment</span></button>'
+            f'<button class="np-item {active_admin}" onclick="document.__npNav(\'admin\')">'
+            '<span class="np-icon">&#9881;&#65039;</span><span class="np-label">Admin Panel</span></button>'
+        )
     else:
-        admin_links = """<button class="sp-nb sp-active" onclick="parent.__spNav('assessment')">🏢 Assessment</button>"""
+        nav_items = (
+            '<button class="np-item np-active" onclick="document.__npNav(\'assessment\')">'
+            '<span class="np-icon">&#127970;</span><span class="np-label">Assessment</span></button>'
+        )
 
-    role_label = "Admin" if role == "admin" else "User"
-    panel_inner = f"""
-        <div class="sp-hdr">
-            <div class="sp-logo">🏢 Dexxora Virtual360</div>
-            <div class="sp-user">👤 {display_name}</div>
-            <div class="sp-role">{role_label}</div>
-        </div>
-        <div class="sp-nav">{admin_links}</div>
-        <div class="sp-ftr">
-            <button class="sp-logout" onclick="parent.__spNav('logout')">🚪 Logout</button>
-        </div>
-    """
+    rail_inner = (
+        '<div class="np-logo-strip">'
+        '<span class="np-logo-icon">&#127959;</span>'
+        '<span class="np-logo-text">Dexxora V360</span></div>'
+        f'<div class="np-nav">{nav_items}</div>'
+        '<div class="np-footer">'
+        '<button class="np-logout" onclick="document.__npNav(\'logout\')">'
+        '<span class="np-icon">&#128682;</span><span class="np-label">Logout</span></button>'
+        '</div>'
+    )
 
-    # Escape backticks and backslashes for JS template literal
-    panel_inner_js = panel_inner.replace("\\", "\\\\").replace("`", "\\`")
+    topbar_inner = (
+        '<div class="np-userinfo">'
+        f'<div class="np-avatar">{avatar_letter}</div>'
+        f'<span class="np-uname">{short_name}</span>'
+        f'<span class="np-urole">{role_label}</span>'
+        '</div>'
+    )
 
-    js = SLIDE_PANEL_HTML.replace("SP_CONTENT", f"`{panel_inner_js}`")
+    def esc(s):
+        return s.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
 
-    # Inject CSS once
-    st.markdown(SLIDE_PANEL_CSS, unsafe_allow_html=True)
-    # Inject panel via components so it can access parent window
+    js = (NAV_PANEL_JS
+          .replace("NAV_DATA",    f"`{esc(rail_inner)}`")
+          .replace("TOPBAR_DATA", f"`{esc(topbar_inner)}`"))
+
     components.html(js, height=0, scrolling=False)
 
-    # Handle nav action from query params
-    params = st.query_params
-    nav = params.get("nav", None)
+    nav = st.query_params.get("nav", None)
     if nav:
         st.query_params.clear()
         if nav == "logout":
-            for k in ["logged_in","current_user","current_role","active_tab","_dlg_action","_dlg_target"]:
+            for k in ["logged_in","current_user","current_role","active_tab",
+                      "_dlg_action","_dlg_target"]:
                 st.session_state.pop(k, None)
             st.session_state.logged_in  = False
             st.session_state.active_tab = "assessment"
@@ -1056,7 +1026,6 @@ def render_slide_panel(display_name, role, active_tab, is_admin):
         elif nav in ("assessment", "admin"):
             st.session_state.active_tab = nav
             st.rerun()
-
 
 
 # ─────────────────────────────────────────────
@@ -1068,8 +1037,7 @@ else:
     ud       = st.session_state.users[st.session_state.current_user]
     is_admin = st.session_state.current_role == "admin"
 
-    # Slide panel nav (replaces sidebar)
-    render_slide_panel(
+    render_nav_panel(
         display_name=ud["display_name"],
         role=st.session_state.current_role,
         active_tab=st.session_state.active_tab,
