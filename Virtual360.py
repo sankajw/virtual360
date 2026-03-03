@@ -893,165 +893,170 @@ def show_assessment():
 # ─────────────────────────────────────────────
 SLIDE_PANEL_CSS = """
 <style>
-/* Hide default Streamlit sidebar entirely */
+/* Remove Streamlit default top padding and sidebar */
 [data-testid="stSidebar"] { display: none !important; }
 [data-testid="collapsedControl"] { display: none !important; }
-
-/* Slide panel overlay */
-#slide-overlay {
-    display: none;
-    position: fixed; top: 0; left: 0;
-    width: 100%; height: 100%;
-    background: rgba(0,0,0,0.35);
-    z-index: 998;
-}
-#slide-overlay.open { display: block; }
-
-/* Slide panel */
-#slide-panel {
-    position: fixed; top: 0; left: -300px;
-    width: 280px; height: 100%;
-    background: #1e2a38;
-    color: #fff;
-    z-index: 999;
-    transition: left 0.28s cubic-bezier(.4,0,.2,1);
-    padding: 0;
-    box-shadow: 4px 0 24px rgba(0,0,0,0.25);
-    display: flex; flex-direction: column;
-}
-#slide-panel.open { left: 0; }
-
-.sp-header {
-    background: #141f2b;
-    padding: 24px 20px 18px 20px;
-    border-bottom: 1px solid #2e3f52;
-}
-.sp-header .sp-logo { font-size: 1.05rem; font-weight: 700; color: #7ec8e3; letter-spacing:.5px; }
-.sp-header .sp-user { font-size: 0.85rem; color: #aac4d8; margin-top: 4px; }
-.sp-header .sp-role {
-    display: inline-block; margin-top: 6px;
-    background: #2e4a66; color: #7ec8e3;
-    border-radius: 10px; padding: 1px 10px;
-    font-size: 0.75rem; font-weight: 600;
-}
-
-.sp-nav { flex: 1; padding: 16px 12px; }
-.sp-btn {
-    display: flex; align-items: center; gap: 10px;
-    width: 100%; padding: 11px 14px;
-    background: transparent; border: none; border-radius: 8px;
-    color: #c9d8e8; font-size: 0.95rem; font-weight: 500;
-    cursor: pointer; margin-bottom: 4px;
-    transition: background .18s;
-    text-align: left;
-}
-.sp-btn:hover { background: #2e3f52; color: #fff; }
-.sp-btn.active { background: #2563eb; color: #fff; }
-
-.sp-footer {
-    padding: 16px 12px 24px 12px;
-    border-top: 1px solid #2e3f52;
-}
-.sp-logout {
-    display: flex; align-items: center; gap: 10px;
-    width: 100%; padding: 11px 14px;
-    background: transparent; border: 1px solid #c0392b;
-    border-radius: 8px; color: #e57373;
-    font-size: 0.92rem; font-weight: 500;
-    cursor: pointer; transition: background .18s;
-    text-align: left;
-}
-.sp-logout:hover { background: #c0392b; color: #fff; }
-
-/* Hamburger toggle button */
-#sp-toggle {
-    position: fixed; top: 14px; left: 14px;
-    z-index: 1000;
-    background: #1e2a38;
-    border: none; border-radius: 8px;
-    padding: 8px 12px; cursor: pointer;
-    color: #fff; font-size: 1.2rem;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-    transition: background .18s;
-}
-#sp-toggle:hover { background: #2563eb; }
-
-/* Push content right when panel open — optional, skip for overlay style */
-body { margin-left: 0 !important; }
+section[data-testid="stMain"] > div:first-child { padding-top: 1rem !important; }
+.block-container { padding-top: 1.5rem !important; }
 </style>
 """
 
+SLIDE_PANEL_HTML = """
+<script>
+(function() {
+    // Inject into parent window so fixed positioning works correctly
+    var parent = window.parent.document;
+
+    // Remove existing panel if re-running
+    ['__sp_toggle','__sp_overlay','__sp_panel','__sp_style'].forEach(function(id){
+        var el = parent.getElementById(id);
+        if (el) el.parentNode.removeChild(el);
+    });
+
+    // Styles
+    var style = parent.createElement('style');
+    style.id = '__sp_style';
+    style.textContent = `
+        #__sp_toggle {
+            position: fixed; top: 12px; left: 12px; z-index: 99999;
+            background: #1e2a38; border: none; border-radius: 8px;
+            padding: 7px 13px; cursor: pointer; color: #fff;
+            font-size: 1.3rem; box-shadow: 0 2px 10px rgba(0,0,0,.35);
+            transition: background .18s; line-height:1;
+        }
+        #__sp_toggle:hover { background: #2563eb; }
+        #__sp_overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,.4); z-index: 99998;
+        }
+        #__sp_panel {
+            position: fixed; top: 0; left: -300px; width: 270px; height: 100%;
+            background: #1e2a38; color: #fff; z-index: 99999;
+            transition: left .28s cubic-bezier(.4,0,.2,1);
+            display: flex; flex-direction: column;
+            box-shadow: 4px 0 24px rgba(0,0,0,.3);
+        }
+        #__sp_panel.sp-open { left: 0; }
+        #__sp_overlay.sp-open { display: block; }
+        .sp-hdr { background:#141f2b; padding:22px 18px 16px; border-bottom:1px solid #2e3f52; }
+        .sp-logo { font-size:.98rem; font-weight:700; color:#7ec8e3; }
+        .sp-user { font-size:.82rem; color:#aac4d8; margin-top:4px; }
+        .sp-role { display:inline-block; margin-top:6px; background:#2e4a66; color:#7ec8e3;
+                   border-radius:10px; padding:1px 10px; font-size:.73rem; font-weight:600; }
+        .sp-nav { flex:1; padding:14px 10px; }
+        .sp-nb {
+            display:flex; align-items:center; gap:9px; width:100%;
+            padding:10px 13px; background:transparent; border:none;
+            border-radius:7px; color:#c9d8e8; font-size:.93rem; font-weight:500;
+            cursor:pointer; margin-bottom:3px; transition:background .16s; text-align:left;
+        }
+        .sp-nb:hover { background:#2e3f52; color:#fff; }
+        .sp-nb.sp-active { background:#2563eb; color:#fff; }
+        .sp-ftr { padding:14px 10px 22px; border-top:1px solid #2e3f52; }
+        .sp-logout {
+            display:flex; align-items:center; gap:9px; width:100%;
+            padding:10px 13px; background:transparent;
+            border:1px solid #c0392b; border-radius:7px;
+            color:#e57373; font-size:.9rem; font-weight:500;
+            cursor:pointer; transition:background .16s; text-align:left;
+        }
+        .sp-logout:hover { background:#c0392b; color:#fff; }
+    `;
+    parent.head.appendChild(style);
+
+    // Hamburger button
+    var toggle = parent.createElement('button');
+    toggle.id = '__sp_toggle';
+    toggle.innerHTML = '&#9776;';
+    toggle.onclick = function(){ openPanel(); };
+    parent.body.appendChild(toggle);
+
+    // Overlay
+    var overlay = parent.createElement('div');
+    overlay.id = '__sp_overlay';
+    overlay.onclick = function(){ closePanel(); };
+    parent.body.appendChild(overlay);
+
+    // Panel — content injected by Python via SP_CONTENT placeholder
+    var panel = parent.createElement('div');
+    panel.id = '__sp_panel';
+    panel.innerHTML = SP_CONTENT;
+    parent.body.appendChild(panel);
+
+    function openPanel(){
+        panel.classList.add('sp-open');
+        overlay.classList.add('sp-open');
+    }
+    function closePanel(){
+        panel.classList.remove('sp-open');
+        overlay.classList.remove('sp-open');
+    }
+    window._spClose = closePanel;
+
+    // Nav click: set query param and navigate
+    parent.__spNav = function(action){
+        closePanel();
+        var url = new URL(parent.location);
+        url.searchParams.set('nav', action);
+        parent.location.href = url.toString();
+    };
+})();
+</script>
+"""
+
+
 def render_slide_panel(display_name, role, active_tab, is_admin):
-    """Render the slide-out navigation panel via HTML + Streamlit form buttons."""
-    st.markdown(SLIDE_PANEL_CSS, unsafe_allow_html=True)
+    """Inject the slide-out nav panel into the parent page via JS."""
+    # Build panel inner HTML
+    admin_links = ""
+    if is_admin:
+        a_active  = "sp-active" if active_tab == "assessment" else ""
+        adm_active = "sp-active" if active_tab == "admin" else ""
+        admin_links = f"""
+        <button class="sp-nb {a_active}"   onclick="parent.__spNav('assessment')">🏢 Assessment</button>
+        <button class="sp-nb {adm_active}" onclick="parent.__spNav('admin')">⚙️ Admin Panel</button>
+        """
+    else:
+        admin_links = """<button class="sp-nb sp-active" onclick="parent.__spNav('assessment')">🏢 Assessment</button>"""
 
-    panel_html = f"""
-    <button id="sp-toggle" onclick="togglePanel()">&#9776;</button>
-
-    <div id="slide-overlay" onclick="closePanel()"></div>
-
-    <div id="slide-panel" id="slide-panel">
-        <div class="sp-header">
+    role_label = "Admin" if role == "admin" else "User"
+    panel_inner = f"""
+        <div class="sp-hdr">
             <div class="sp-logo">🏢 Dexxora Virtual360</div>
             <div class="sp-user">👤 {display_name}</div>
-            <div class="sp-role">{'Admin' if role == 'admin' else 'User'}</div>
+            <div class="sp-role">{role_label}</div>
         </div>
-        <div class="sp-nav" id="sp-nav-content">
+        <div class="sp-nav">{admin_links}</div>
+        <div class="sp-ftr">
+            <button class="sp-logout" onclick="parent.__spNav('logout')">🚪 Logout</button>
+        </div>
     """
 
-    if is_admin:
-        panel_html += f"""
-            <button class="sp-btn {'active' if active_tab == 'assessment' else ''}"
-                    onclick="navClick('assessment')">🏢 Assessment</button>
-            <button class="sp-btn {'active' if active_tab == 'admin' else ''}"
-                    onclick="navClick('admin')">⚙️ Admin Panel</button>
-        """
+    # Escape backticks and backslashes for JS template literal
+    panel_inner_js = panel_inner.replace("\\", "\\\\").replace("`", "\\`")
 
-    panel_html += """
-        </div>
-        <div class="sp-footer">
-            <button class="sp-logout" onclick="navClick('logout')">🚪 Logout</button>
-        </div>
-    </div>
+    js = SLIDE_PANEL_HTML.replace("SP_CONTENT", f"`{panel_inner_js}`")
 
-    <script>
-    function togglePanel() {
-        document.getElementById('slide-panel').classList.toggle('open');
-        document.getElementById('slide-overlay').classList.toggle('open');
-    }
-    function closePanel() {
-        document.getElementById('slide-panel').classList.remove('open');
-        document.getElementById('slide-overlay').classList.remove('open');
-    }
-    function navClick(action) {
-        closePanel();
-        // Set a hidden input value and submit via Streamlit query param trick
-        const url = new URL(window.location);
-        url.searchParams.set('nav', action);
-        window.location.href = url.toString();
-    }
-    // Auto-open on load if panel was triggered
-    </script>
-    """
-    st.markdown(panel_html, unsafe_allow_html=True)
+    # Inject CSS once
+    st.markdown(SLIDE_PANEL_CSS, unsafe_allow_html=True)
+    # Inject panel via components so it can access parent window
+    components.html(js, height=0, scrolling=False)
 
-    # Read nav action from query params
+    # Handle nav action from query params
     params = st.query_params
     nav = params.get("nav", None)
     if nav:
         st.query_params.clear()
         if nav == "logout":
-            st.session_state.logged_in    = False
-            st.session_state.current_user = None
-            st.session_state.current_role = None
-            st.session_state.active_tab   = "assessment"
-            st.rerun()
-        elif nav in ("assessment", "admin") and is_admin:
-            st.session_state.active_tab = nav
-            st.rerun()
-        elif nav == "assessment":
+            for k in ["logged_in","current_user","current_role","active_tab","_dlg_action","_dlg_target"]:
+                st.session_state.pop(k, None)
+            st.session_state.logged_in  = False
             st.session_state.active_tab = "assessment"
             st.rerun()
+        elif nav in ("assessment", "admin"):
+            st.session_state.active_tab = nav
+            st.rerun()
+
 
 
 # ─────────────────────────────────────────────
@@ -1063,9 +1068,7 @@ else:
     ud       = st.session_state.users[st.session_state.current_user]
     is_admin = st.session_state.current_role == "admin"
 
-    # Add top padding so hamburger button doesn't overlap content
-    st.markdown("<div style='height:50px'></div>", unsafe_allow_html=True)
-
+    # Slide panel nav (replaces sidebar)
     render_slide_panel(
         display_name=ud["display_name"],
         role=st.session_state.current_role,
