@@ -82,6 +82,24 @@ def init_db():
             conn.execute("ALTER TABLE tenants RENAME COLUMN hotel_name TO tenant_name")
             conn.commit()
 
+        # 4. Migrate existing usernames to include @dexxora360 suffix
+        old_users = conn.execute(
+            "SELECT username FROM users WHERE username NOT LIKE '%@dexxora360'"
+        ).fetchall()
+        for row in old_users:
+            old_name = row["username"]
+            new_name = old_name + "@dexxora360"
+            # Only rename if the new name doesn't already exist
+            exists = conn.execute(
+                "SELECT 1 FROM users WHERE username = ?", (new_name,)
+            ).fetchone()
+            if not exists:
+                conn.execute(
+                    "UPDATE users SET username = ? WHERE username = ?",
+                    (new_name, old_name)
+                )
+        conn.commit()
+
         # ── Seed tenant types ─────────────────────────────────────────
         ttcount = conn.execute("SELECT COUNT(*) FROM tenant_types").fetchone()[0]
         if ttcount == 0:
@@ -177,19 +195,19 @@ def _get_seed_users() -> dict:
         pass
     # Hard-coded fallback
     return {
-        "admin": {
+        "admin@dexxora360": {
             "password_hash": hash_pw("Admin@123"),
             "role":          "admin",
             "tenant_access":  ["EDEN Tenant", "Thaala Tenant"],
             "display_name":  "Administrator",
         },
-        "eden_user": {
+        "eden_user@dexxora360": {
             "password_hash": hash_pw("Eden@123"),
             "role":          "user",
             "tenant_access":  ["EDEN Tenant"],
             "display_name":  "EDEN Staff",
         },
-        "thaala_user": {
+        "thaala_user@dexxora360": {
             "password_hash": hash_pw("Thaala@123"),
             "role":          "user",
             "tenant_access":  ["Thaala Tenant"],
@@ -331,7 +349,21 @@ def show_login():
             "<h4 style='color:#2E3B4E;margin-bottom:18px;text-align:center;'>Sign In</h4>",
             unsafe_allow_html=True,
         )
-        username = st.text_input("Username", placeholder="Enter username")
+
+        DOMAIN = "@dexxora360"
+
+        # Username row: input + fixed suffix badge
+        u_col, suf_col = st.columns([3, 2])
+        with u_col:
+            username_prefix = st.text_input("Username", placeholder="Enter username")
+        with suf_col:
+            st.markdown(
+                f"<div style='margin-top:28px;background:#e8edf3;border:1px solid #c8d3de;"
+                f"border-radius:6px;padding:8px 10px;color:#2E3B4E;font-weight:600;"
+                f"font-size:0.95rem;text-align:center;'>{DOMAIN}</div>",
+                unsafe_allow_html=True,
+            )
+        username = (username_prefix.strip() + DOMAIN) if username_prefix.strip() else ""
         password = st.text_input("Password", type="password", placeholder="Enter password")
 
         if st.button("🔐 Login", use_container_width=True, type="primary"):
@@ -385,8 +417,18 @@ def show_admin_panel():
         # Add user
         with col_add:
             st.subheader("➕ Add New User")
+            DOMAIN = "@dexxora360"
             with st.form("add_user_form", clear_on_submit=True):
-                nu   = st.text_input("Username")
+                nu_col, nu_suf = st.columns([3, 2])
+                with nu_col:
+                    nu_prefix = st.text_input("Username")
+                with nu_suf:
+                    st.markdown(
+                        f"<div style='margin-top:28px;background:#e8edf3;border:1px solid #c8d3de;"
+                        f"border-radius:6px;padding:8px 10px;color:#2E3B4E;font-weight:600;"
+                        f"font-size:0.9rem;text-align:center;'>{DOMAIN}</div>",
+                        unsafe_allow_html=True,
+                    )
                 nd   = st.text_input("Display Name")
                 nr   = st.selectbox("Role", ["user", "admin"])
                 nh   = st.multiselect("Tenant Access",
@@ -397,10 +439,11 @@ def show_admin_panel():
                 add  = st.form_submit_button("Add User", use_container_width=True)
 
             if add:
-                if not nu or not np1:
+                nu = (nu_prefix.strip() + DOMAIN) if nu_prefix.strip() else ""
+                if not nu_prefix.strip() or not np1:
                     st.error("Username and password are required.")
                 elif nu in st.session_state.users:
-                    st.error("Username already exists.")
+                    st.error(f"Username **{nu}** already exists.")
                 elif np1 != np2:
                     st.error("Passwords do not match.")
                 elif not nh:
@@ -409,8 +452,8 @@ def show_admin_panel():
                     st.session_state.users[nu] = {
                         "password_hash": hash_pw(np1),
                         "role":          nr,
-                        "tenant_access":  nh,
-                        "display_name":  nd or nu,
+                        "tenant_access": nh,
+                        "display_name":  nd or nu_prefix.strip(),
                     }
                     save_users_to_secrets(st.session_state.users)
                     st.success(f"User **{nu}** created.")
