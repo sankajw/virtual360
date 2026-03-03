@@ -56,6 +56,11 @@ def init_db():
                 tenant_type TEXT NOT NULL DEFAULT 'Commercial'
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tenant_types (
+                type_name TEXT PRIMARY KEY
+            )
+        """)
         conn.commit()
 
         # ── Migrations ───────────────────────────────────────────────
@@ -75,6 +80,14 @@ def init_db():
         tcols2 = [r[1] for r in conn.execute("PRAGMA table_info(tenants)").fetchall()]
         if "hotel_name" in tcols2 and "tenant_name" not in tcols2:
             conn.execute("ALTER TABLE tenants RENAME COLUMN hotel_name TO tenant_name")
+            conn.commit()
+
+        # ── Seed tenant types ─────────────────────────────────────────
+        ttcount = conn.execute("SELECT COUNT(*) FROM tenant_types").fetchone()[0]
+        if ttcount == 0:
+            default_types = ["Commercial", "Residential", "Retail", "Industrial", "Hospitality", "Mixed-Use", "Other"]
+            for t in default_types:
+                conn.execute("INSERT OR IGNORE INTO tenant_types VALUES (?)", (t,))
             conn.commit()
 
         # ── Seed tenants ─────────────────────────────────────────────
@@ -117,6 +130,25 @@ def add_tenant_to_db(tenant_name: str, tenant_type: str):
 def delete_tenant_from_db(tenant_name: str):
     with get_db() as conn:
         conn.execute("DELETE FROM tenants WHERE tenant_name = ?", (tenant_name,))
+        conn.commit()
+
+
+def load_tenant_types_from_db() -> list:
+    """Return sorted list of tenant type strings from the DB."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT type_name FROM tenant_types ORDER BY type_name").fetchall()
+    return [r["type_name"] for r in rows]
+
+
+def add_tenant_type_to_db(type_name: str):
+    with get_db() as conn:
+        conn.execute("INSERT OR IGNORE INTO tenant_types VALUES (?)", (type_name,))
+        conn.commit()
+
+
+def delete_tenant_type_from_db(type_name: str):
+    with get_db() as conn:
+        conn.execute("DELETE FROM tenant_types WHERE type_name = ?", (type_name,))
         conn.commit()
 
 
@@ -228,6 +260,9 @@ def init_state():
 
     if "tenants" not in st.session_state:
         st.session_state.tenants = load_tenants_from_db()
+
+    if "tenant_types" not in st.session_state:
+        st.session_state.tenant_types = load_tenant_types_from_db()
 
     if "tenant_data" not in st.session_state:
         st.session_state.tenant_data = pd.DataFrame(columns=[
@@ -435,8 +470,55 @@ def show_admin_panel():
 
     # ── TAB 2 : Tenant Management ─────────────────────────────────────
     with tab_tenants:
-        st.subheader("🏢 Tenants")
 
+        # ── Section A: Tenant Types ───────────────────────────────────
+        st.subheader("🗂️ Tenant Types")
+        cur_types = load_tenant_types_from_db()
+        if cur_types:
+            st.dataframe(
+                pd.DataFrame({"Tenant Type": cur_types}),
+                use_container_width=True, hide_index=True,
+            )
+        else:
+            st.info("No tenant types defined yet.")
+
+        tt_add_col, tt_del_col = st.columns(2)
+
+        with tt_add_col:
+            with st.form("add_type_form", clear_on_submit=True):
+                new_type_name = st.text_input("New Tenant Type", placeholder="e.g. Co-Working")
+                add_type_btn  = st.form_submit_button("➕ Add Type", use_container_width=True)
+            if add_type_btn:
+                nt = new_type_name.strip()
+                if not nt:
+                    st.error("Type name cannot be empty.")
+                elif nt in cur_types:
+                    st.error("Type already exists.")
+                else:
+                    add_tenant_type_to_db(nt)
+                    st.session_state.tenant_types = load_tenant_types_from_db()
+                    st.success(f"Tenant type **{nt}** added.")
+                    st.rerun()
+
+        with tt_del_col:
+            with st.form("del_type_form", clear_on_submit=True):
+                del_type = st.selectbox(
+                    "Delete Tenant Type",
+                    cur_types if cur_types else ["(none)"],
+                    key="del_type_sel",
+                )
+                del_type_btn = st.form_submit_button("🗑️ Delete Type", type="primary",
+                                                      use_container_width=True)
+            if del_type_btn and del_type != "(none)":
+                delete_tenant_type_from_db(del_type)
+                st.session_state.tenant_types = load_tenant_types_from_db()
+                st.success(f"Tenant type **{del_type}** deleted.")
+                st.rerun()
+
+        st.markdown("---")
+
+        # ── Section B: Tenants ────────────────────────────────────────
+        st.subheader("🏢 Tenants")
         tenants = st.session_state.tenants
         if tenants:
             st.dataframe(
@@ -451,10 +533,13 @@ def show_admin_panel():
 
         with tcol_add:
             st.subheader("➕ Add New Tenant")
-            TENANT_TYPES = ["Commercial", "Residential", "Retail", "Industrial", "Hospitality", "Mixed-Use", "Other"]
+            live_types = load_tenant_types_from_db()
             with st.form("add_tenant_form", clear_on_submit=True):
                 new_tenant_name = st.text_input("Tenant Name", placeholder="e.g. Marina Bay Tower")
-                new_tenant_type = st.selectbox("Tenant Type", TENANT_TYPES)
+                new_tenant_type = st.selectbox(
+                    "Tenant Type",
+                    live_types if live_types else ["(no types defined)"]
+                )
                 add_tenant_btn  = st.form_submit_button("Add Tenant", use_container_width=True)
 
             if add_tenant_btn:
@@ -463,6 +548,8 @@ def show_admin_panel():
                     st.error("Tenant name cannot be empty.")
                 elif hn in get_tenant_names():
                     st.error("Tenant already exists.")
+                elif not live_types:
+                    st.error("Please add at least one Tenant Type first.")
                 else:
                     add_tenant_to_db(hn, new_tenant_type)
                     st.session_state.tenants = load_tenants_from_db()
@@ -484,7 +571,6 @@ def show_admin_panel():
 
             if del_tenant_btn and del_tenant != "(none)":
                 delete_tenant_from_db(del_tenant)
-                # Remove from all user tenant_access lists
                 for uname, ud in st.session_state.users.items():
                     if del_tenant in ud["tenant_access"]:
                         ud["tenant_access"] = [t for t in ud["tenant_access"] if t != del_tenant]
