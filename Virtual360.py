@@ -133,6 +133,13 @@ def delete_tenant_from_db(tenant_name: str):
         conn.commit()
 
 
+def update_tenant_type_in_db(tenant_name: str, new_type: str):
+    with get_db() as conn:
+        conn.execute("UPDATE tenants SET tenant_type = ? WHERE tenant_name = ?",
+                     (new_type, tenant_name))
+        conn.commit()
+
+
 def load_tenant_types_from_db() -> list:
     """Return sorted list of tenant type strings from the DB."""
     with get_db() as conn:
@@ -529,10 +536,11 @@ def show_admin_panel():
             st.info("No tenants added yet.")
 
         st.markdown("---")
-        tcol_add, tcol_del = st.columns(2)
+        tcol_add, tcol_edit, tcol_del = st.columns(3)
 
+        # ── Add ──────────────────────────────────────────────────────
         with tcol_add:
-            st.subheader("➕ Add New Tenant")
+            st.subheader("➕ Add Tenant")
             live_types = load_tenant_types_from_db()
             with st.form("add_tenant_form", clear_on_submit=True):
                 new_tenant_name = st.text_input("Tenant Name", placeholder="e.g. Marina Bay Tower")
@@ -540,7 +548,7 @@ def show_admin_panel():
                     "Tenant Type",
                     live_types if live_types else ["(no types defined)"]
                 )
-                add_tenant_btn  = st.form_submit_button("Add Tenant", use_container_width=True)
+                add_tenant_btn = st.form_submit_button("Add Tenant", use_container_width=True)
 
             if add_tenant_btn:
                 hn = new_tenant_name.strip()
@@ -553,16 +561,49 @@ def show_admin_panel():
                 else:
                     add_tenant_to_db(hn, new_tenant_type)
                     st.session_state.tenants = load_tenants_from_db()
-                    st.success(f"Tenant **{hn}** ({new_tenant_type}) added.")
+                    st.success(f"**{hn}** added.")
                     st.rerun()
 
+        # ── Edit (type only) ─────────────────────────────────────────
+        with tcol_edit:
+            st.subheader("✏️ Edit Tenant Type")
+            tenant_name_list = get_tenant_names()
+            live_types_edit  = load_tenant_types_from_db()
+            # Build a lookup: name → current type
+            tenant_type_map  = {t["name"]: t["type"] for t in load_tenants_from_db()}
+            with st.form("edit_tenant_form", clear_on_submit=False):
+                edit_tenant = st.selectbox(
+                    "Select Tenant",
+                    tenant_name_list if tenant_name_list else ["(none)"],
+                    key="edit_tenant_sel",
+                )
+                # Pre-select current type
+                cur_type = tenant_type_map.get(edit_tenant, "")
+                safe_idx = live_types_edit.index(cur_type) if cur_type in live_types_edit else 0
+                new_type = st.selectbox(
+                    "New Tenant Type",
+                    live_types_edit if live_types_edit else ["(no types defined)"],
+                    index=safe_idx,
+                    key="edit_tenant_type_sel",
+                )
+                edit_btn = st.form_submit_button("Update Type", use_container_width=True)
+
+            if edit_btn and edit_tenant != "(none)":
+                if not live_types_edit:
+                    st.error("No tenant types available.")
+                else:
+                    update_tenant_type_in_db(edit_tenant, new_type)
+                    st.session_state.tenants = load_tenants_from_db()
+                    st.success(f"**{edit_tenant}** updated to *{new_type}*.")
+                    st.rerun()
+
+        # ── Delete ───────────────────────────────────────────────────
         with tcol_del:
             st.subheader("🗑️ Delete Tenant")
-            st.warning("Deleting a tenant will NOT remove its assessment data.", icon="⚠️")
-            tenant_name_list = get_tenant_names()
+            st.warning("Assessment data will NOT be removed.", icon="⚠️")
             with st.form("del_tenant_form", clear_on_submit=True):
                 del_tenant = st.selectbox(
-                    "Select Tenant to Delete",
+                    "Select Tenant",
                     tenant_name_list if tenant_name_list else ["(none)"],
                     key="del_tenant_sel",
                 )
@@ -576,7 +617,7 @@ def show_admin_panel():
                         ud["tenant_access"] = [t for t in ud["tenant_access"] if t != del_tenant]
                         save_user_to_db(uname, ud)
                 st.session_state.tenants = load_tenants_from_db()
-                st.session_state.users  = load_users_from_db()
+                st.session_state.users   = load_users_from_db()
                 st.success(f"Tenant **{del_tenant}** deleted.")
                 st.rerun()
 
