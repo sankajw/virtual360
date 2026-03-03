@@ -413,12 +413,15 @@ def show_admin_panel():
         st.markdown("---")
         st.subheader("🏢 Edit Tenant Access")
         with st.form("edit_access_form"):
-            ea_u    = st.selectbox("Select User",
-                                   list(st.session_state.users.keys()), key="ea_u")
-            cur_acc = st.session_state.users.get(ea_u, {}).get("tenant_access", [])
+            ea_u       = st.selectbox("Select User",
+                                      list(st.session_state.users.keys()), key="ea_u")
+            valid_names = get_tenant_names()
+            cur_acc     = st.session_state.users.get(ea_u, {}).get("tenant_access", [])
+            # Filter out stale entries (e.g. old hotel names no longer in tenant list)
+            safe_default = [a for a in cur_acc if a in valid_names]
             new_acc = st.multiselect("Tenant Access",
-                                     get_tenant_names(),
-                                     default=cur_acc, key="ea_acc")
+                                     valid_names,
+                                     default=safe_default, key="ea_acc")
             ea_btn  = st.form_submit_button("Update Access")
 
         if ea_btn:
@@ -599,8 +602,11 @@ def show_assessment():
 
     st.markdown("---")
 
+    valid_tenant_names = get_tenant_names()
+    safe_tenant_access = [t for t in tenant_access if t in valid_tenant_names]
+
     tenant_filter = st.sidebar.multiselect(
-        "Filter View", tenant_access, default=tenant_access)
+        "Filter View", valid_tenant_names, default=safe_tenant_access)
 
     # Refresh hotel list in case admin added new ones
     # tenants refreshed above
