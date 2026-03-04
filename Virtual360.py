@@ -22,6 +22,29 @@ import streamlit.components.v1 as components
 # ─────────────────────────────────────────────
 st.set_page_config(page_title="Dexxora | Virtual360", layout="wide")
 
+# Global dialog & form spacing
+st.markdown("""
+<style>
+/* Give dialog content more breathing room */
+div[data-testid="stDialog"] > div > div {
+    padding: 1.5rem 1.8rem 1.2rem !important;
+}
+/* More space between form fields */
+div[data-testid="stDialog"] .stTextInput,
+div[data-testid="stDialog"] .stSelectbox,
+div[data-testid="stDialog"] .stNumberInput,
+div[data-testid="stDialog"] .stMultiSelect {
+    margin-bottom: 0.6rem !important;
+}
+/* Bigger form submit buttons */
+div[data-testid="stDialog"] .stFormSubmitButton button,
+div[data-testid="stDialog"] .stButton button {
+    height: 2.4rem !important;
+    font-size: .92rem !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # ─────────────────────────────────────────────
 # BRANDING — base64 encoded logos
 # ─────────────────────────────────────────────
@@ -740,7 +763,7 @@ def show_admin_panel():
         DOMAIN = "@dexxora360"
 
         # ── Dialog: Add New User ──────────────────────────────────────
-        @st.dialog("➕ Add New User")
+        @st.dialog("➕ Add New User", width="large")
         def dialog_add_user():
             with st.form("dlg_add_user_form", clear_on_submit=True):
                 nu_col, nu_suf = st.columns([3, 2])
@@ -786,7 +809,7 @@ def show_admin_panel():
                     st.rerun()
 
         # ── Dialog: Edit User ─────────────────────────────────────────
-        @st.dialog("✏️ Edit User")
+        @st.dialog("✏️ Edit User", width="large")
         def dialog_edit_user(username):
             ud            = st.session_state.users.get(username, {})
             valid_tenants = get_tenant_names()
@@ -817,7 +840,7 @@ def show_admin_panel():
                     st.rerun()
 
         # ── Dialog: Change Password ───────────────────────────────────
-        @st.dialog("🔑 Change Password")
+        @st.dialog("🔑 Change Password", width="large")
         def dialog_change_pw(username):
             st.markdown(f"**Username:** `{username}`")
             with st.form("dlg_pw_form", clear_on_submit=True):
@@ -841,7 +864,7 @@ def show_admin_panel():
                     st.rerun()
 
         # ── Dialog: Delete User ───────────────────────────────────────
-        @st.dialog("🗑️ Delete User")
+        @st.dialog("🗑️ Delete User", width="medium")
         def dialog_delete_user(username):
             st.warning(f"Are you sure you want to delete **{username}**? This cannot be undone.", icon="⚠️")
             c1, c2 = st.columns(2)
@@ -926,7 +949,7 @@ def show_admin_panel():
     with tab_tenants:
 
         # ── Dialog: Add Tenant ────────────────────────────────────────
-        @st.dialog("➕ Add New Tenant")
+        @st.dialog("➕ Add New Tenant", width="large")
         def dialog_add_tenant():
             live_types = load_tenant_types_from_db()
             with st.form("dlg_add_tenant", clear_on_submit=True):
@@ -951,7 +974,7 @@ def show_admin_panel():
                     st.rerun()
 
         # ── Dialog: Edit Tenant ───────────────────────────────────────
-        @st.dialog("✏️ Edit Tenant")
+        @st.dialog("✏️ Edit Tenant", width="large")
         def dialog_edit_tenant(tenant_name):
             live_types = load_tenant_types_from_db()
             cur_map    = {t["name"]: t["type"] for t in load_tenants_from_db()}
@@ -973,7 +996,7 @@ def show_admin_panel():
                 st.rerun()
 
         # ── Dialog: Delete Tenant ─────────────────────────────────────
-        @st.dialog("🗑️ Delete Tenant")
+        @st.dialog("🗑️ Delete Tenant", width="medium")
         def dialog_delete_tenant(tenant_name):
             st.warning(f"Delete **{tenant_name}**? This cannot be undone.", icon="⚠️")
             st.caption("Users assigned to this tenant will have it removed from their access.")
@@ -995,7 +1018,7 @@ def show_admin_panel():
                 st.rerun()
 
         # ── Dialog: Manage Tenant Types ───────────────────────────────
-        @st.dialog("🗂️ Manage Tenant Types")
+        @st.dialog("🗂️ Manage Tenant Types", width="large")
         def dialog_manage_types():
             cur_types = load_tenant_types_from_db()
             st.markdown("**Current Types**")
@@ -1201,7 +1224,7 @@ def show_assessment():
         st.markdown("---")
 
         # ── Dialogs for area CRUD ─────────────────────────────────────
-        @st.dialog("➕ Add Area")
+        @st.dialog("➕ Add Area", width="large")
         def dialog_add_area():
             with st.form("frm_add_area", clear_on_submit=True):
                 c1, c2 = st.columns(2)
@@ -1219,7 +1242,7 @@ def show_assessment():
                     st.session_state._adlg_action = None
                     st.rerun()
 
-        @st.dialog("✏️ Edit Area")
+        @st.dialog("✏️ Edit Area", width="large")
         def dialog_edit_area(area):
             cur_idx = CATS.index(area["category"]) if area["category"] in CATS else 0
             with st.form("frm_edit_area"):
@@ -1240,7 +1263,7 @@ def show_assessment():
                     st.session_state._adlg_target = None
                     st.rerun()
 
-        @st.dialog("🗑️ Delete Area")
+        @st.dialog("🗑️ Delete Area", width="medium")
         def dialog_delete_area(area):
             st.warning(f"Delete area **{area['area_name']}**?", icon="⚠️")
             c1, c2 = st.columns(2)
@@ -1278,42 +1301,48 @@ def show_assessment():
         if not areas:
             st.info("No areas yet — click **➕ Add Area** to start.")
         else:
-            # Header row
-            h_cols = st.columns([0.5, 3, 2.5, 1.5, 1.5])
-            for col, lbl in zip(h_cols, ["#", "Area Name", "Category", "SQFT", "Actions"]):
-                col.markdown(f"**{lbl}**")
-            st.markdown("<hr style='margin:4px 0 6px;'>", unsafe_allow_html=True)
+            AREA_W = [0.4, 3.2, 2.4, 1.4, 0.5, 0.5]
+            h_cols = st.columns(AREA_W)
+            for col, lbl in zip(h_cols, ["#", "Area Name", "Category", "SQFT", "", ""]):
+                if lbl:
+                    col.markdown(f"<span style='font-size:.82rem;font-weight:700;color:#5a7a9a;'>{lbl}</span>",
+                                 unsafe_allow_html=True)
+            st.markdown("<hr style='margin:3px 0 4px;border-color:#e0e7ef;'>", unsafe_allow_html=True)
+
+            cat_colors = {
+                "Suite/Room": "#1565C0", "Restaurant & Bar": "#6A1B9A",
+                "Lobby": "#00695C", "Function Venue": "#E65100",
+                "Outdoor": "#2E7D32", "Gym": "#AD1457", "Other": "#546E7A"
+            }
 
             for i, area in enumerate(areas, 1):
-                rc = st.columns([0.5, 3, 2.5, 1.5, 1.5])
-                rc[0].markdown(str(i))
-                rc[1].markdown(area["area_name"])
-
-                cat_colors = {
-                    "Suite/Room": "#1565C0", "Restaurant & Bar": "#6A1B9A",
-                    "Lobby": "#00695C", "Function Venue": "#E65100",
-                    "Outdoor": "#2E7D32", "Gym": "#AD1457", "Other": "#546E7A"
-                }
+                rc = st.columns(AREA_W)
+                rc[0].markdown(f"<span style='color:#aaa;font-size:.82rem;'>{i}</span>",
+                               unsafe_allow_html=True)
+                rc[1].markdown(f"<span style='font-size:.88rem;'>{area['area_name']}</span>",
+                               unsafe_allow_html=True)
                 c = cat_colors.get(area["category"], "#546E7A")
                 rc[2].markdown(
-                    f"<span style='background:{c};color:#fff;padding:2px 10px;"
-                    f"border-radius:12px;font-size:.8rem;'>{area['category']}</span>",
+                    f"<span style='background:{c};color:#fff;padding:2px 9px;"
+                    f"border-radius:12px;font-size:.78rem;'>{area['category']}</span>",
                     unsafe_allow_html=True
                 )
-                rc[3].markdown(f"{area['sqft']:,.1f}")
-                btn1, btn2 = rc[4].columns(2)
-                if btn1.button("✏️", key=f"area_edit_{area['id']}", help="Edit"):
+                rc[3].markdown(f"<span style='font-size:.88rem;'>{area['sqft']:,.1f}</span>",
+                               unsafe_allow_html=True)
+                if rc[4].button("✏️", key=f"area_edit_{area['id']}", help="Edit", use_container_width=True):
                     st.session_state._adlg_action = "edit_area"
                     st.session_state._adlg_target = area["id"]
-                if btn2.button("🗑️", key=f"area_del_{area['id']}", help="Delete"):
+                if rc[5].button("🗑️", key=f"area_del_{area['id']}", help="Delete", use_container_width=True):
                     st.session_state._adlg_action = "del_area"
                     st.session_state._adlg_target = area["id"]
 
-            st.markdown("<hr style='margin:6px 0;'>", unsafe_allow_html=True)
-            tot_cols = st.columns([0.5, 3, 2.5, 1.5, 1.5])
+            st.markdown("<hr style='margin:4px 0 3px;border-color:#e0e7ef;'>", unsafe_allow_html=True)
+            tot_cols = st.columns(AREA_W)
             tot_cols[0].markdown("**Σ**")
-            tot_cols[1].markdown(f"**{len(areas)} areas**")
-            tot_cols[3].markdown(f"**{total_sqft:,.1f}**")
+            tot_cols[1].markdown(f"<span style='font-size:.85rem;font-weight:600;'>{len(areas)} areas</span>",
+                                 unsafe_allow_html=True)
+            tot_cols[3].markdown(f"<span style='font-size:.85rem;font-weight:600;'>{total_sqft:,.1f}</span>",
+                                 unsafe_allow_html=True)
 
         # ── Open area dialogs ─────────────────────────────────────────
         aact = st.session_state._adlg_action
@@ -1337,7 +1366,7 @@ def show_assessment():
     # ─────────────────────────────────────────────────────────────────
 
     # ── Dialogs for assessment CRUD ───────────────────────────────────
-    @st.dialog("➕ New Assessment")
+    @st.dialog("➕ New Assessment", width="large")
     def dialog_new_assessment():
         tenants_for_form = get_tenant_names() if is_admin else tenant_access
         with st.form("frm_new_assessment", clear_on_submit=True):
@@ -1357,7 +1386,7 @@ def show_assessment():
                 st.session_state._open_assessment = new_id
                 st.rerun()
 
-    @st.dialog("✏️ Edit Assessment")
+    @st.dialog("✏️ Edit Assessment", width="large")
     def dialog_edit_assessment(a):
         tenants_for_form = get_tenant_names() if is_admin else tenant_access
         cur_t = a["tenant_name"]
@@ -1377,7 +1406,7 @@ def show_assessment():
                 st.session_state._adlg_target = None
                 st.rerun()
 
-    @st.dialog("🗑️ Delete Assessment")
+    @st.dialog("🗑️ Delete Assessment", width="medium")
     def dialog_delete_assessment(a):
         summary = get_assessment_summary(a["id"])
         st.warning(
@@ -1437,54 +1466,72 @@ def show_assessment():
         sm3.metric("Total SQFT",  f"{total_sqft:,.1f}")
         st.markdown("")
 
-        # Grid header
+        # Grid header — View | ID | Assessment Name | Tenant | Date | Areas | (Created By) | Edit | Del
         if is_admin:
-            hcols = st.columns([0.5, 3, 2.5, 1.5, 0.8, 1.8, 1.8])
-            for col, lbl in zip(hcols, ["ID", "Assessment Name", "Tenant", "Date", "Areas", "Created By", "Actions"]):
-                col.markdown(f"**{lbl}**")
+            COL_W = [0.6, 0.5, 2.8, 2.2, 1.4, 0.6, 1.4, 0.5, 0.5]
+            LABELS = ["", "ID", "Assessment Name", "Tenant", "Date", "Areas", "Created By", "", ""]
         else:
-            hcols = st.columns([0.5, 3, 2.5, 1.5, 0.8, 1.8])
-            for col, lbl in zip(hcols, ["ID", "Assessment Name", "Tenant", "Date", "Areas", "Actions"]):
-                col.markdown(f"**{lbl}**")
-        st.markdown("<hr style='margin:4px 0 6px;'>", unsafe_allow_html=True)
+            COL_W = [0.6, 0.5, 3.2, 2.4, 1.4, 0.6, 0.5, 0.5]
+            LABELS = ["", "ID", "Assessment Name", "Tenant", "Date", "Areas", "", ""]
+
+        hcols = st.columns(COL_W)
+        for col, lbl in zip(hcols, LABELS):
+            if lbl:
+                col.markdown(f"<span style='font-size:.82rem;font-weight:700;color:#5a7a9a;'>{lbl}</span>",
+                             unsafe_allow_html=True)
+        st.markdown("<hr style='margin:3px 0 4px;border-color:#e0e7ef;'>", unsafe_allow_html=True)
 
         for a in assessments:
             summary = get_assessment_summary(a["id"])
-            if is_admin:
-                rc = st.columns([0.5, 3, 2.5, 1.5, 0.8, 1.8, 1.8])
-            else:
-                rc = st.columns([0.5, 3, 2.5, 1.5, 0.8, 1.8])
+            rc = st.columns(COL_W)
 
-            rc[0].markdown(f"`{a['id']}`")
-
-            # Clickable assessment name → opens detail
-            if rc[1].button(a["assessment_name"], key=f"open_{a['id']}",
-                            use_container_width=True):
+            # Col 0 — View button (first!)
+            if rc[0].button("👁", key=f"open_{a['id']}", help="Open assessment", use_container_width=True):
                 st.session_state._open_assessment = a["id"]
                 st.session_state._adlg_action     = None
                 st.rerun()
 
-            rc[2].markdown(a["tenant_name"])
-            rc[3].markdown(a["date_added"])
-            rc[4].markdown(str(summary["count"]))
+            # Col 1 — ID
+            rc[1].markdown(f"<span style='color:#888;font-size:.8rem;'>{a['id']}</span>",
+                           unsafe_allow_html=True)
+
+            # Col 2 — Assessment Name
+            rc[2].markdown(
+                f"<span style='font-weight:600;font-size:.88rem;'>{a['assessment_name']}</span>",
+                unsafe_allow_html=True)
+
+            # Col 3 — Tenant
+            rc[3].markdown(f"<span style='font-size:.85rem;'>{a['tenant_name']}</span>",
+                           unsafe_allow_html=True)
+
+            # Col 4 — Date
+            rc[4].markdown(f"<span style='font-size:.82rem;color:#666;'>{a['date_added']}</span>",
+                           unsafe_allow_html=True)
+
+            # Col 5 — Area count badge
+            cnt = summary["count"]
+            rc[5].markdown(
+                f"<span style='background:#e8f0fe;color:#1a56db;font-size:.78rem;"
+                f"font-weight:700;padding:2px 7px;border-radius:10px;'>{cnt}</span>",
+                unsafe_allow_html=True)
 
             if is_admin:
+                # Col 6 — Created By
                 creator = str(a.get("created_by","")).split("@")[0]
-                rc[5].markdown(
-                    f"<span style='color:#7ec8e3;font-size:.8rem;'>{creator}</span>",
-                    unsafe_allow_html=True
-                )
-                act_col = rc[6]
+                rc[6].markdown(f"<span style='color:#7ec8e3;font-size:.78rem;'>{creator}</span>",
+                               unsafe_allow_html=True)
+                edit_col, del_col = rc[7], rc[8]
             else:
-                act_col = rc[5]
+                edit_col, del_col = rc[6], rc[7]
 
-            ab1, ab2 = act_col.columns(2)
-            if ab1.button("✏️", key=f"aedit_{a['id']}", help="Edit Assessment"):
+            if edit_col.button("✏️", key=f"aedit_{a['id']}", help="Edit", use_container_width=True):
                 st.session_state._adlg_action = "edit_assessment"
                 st.session_state._adlg_target = a["id"]
-            if ab2.button("🗑️", key=f"adel_{a['id']}", help="Delete Assessment"):
+            if del_col.button("🗑️", key=f"adel_{a['id']}", help="Delete", use_container_width=True):
                 st.session_state._adlg_action = "delete_assessment"
                 st.session_state._adlg_target = a["id"]
+
+            st.markdown("<div style='height:2px;'></div>", unsafe_allow_html=True)
 
     # ── Open dialogs ──────────────────────────────────────────────────
     aact = st.session_state._adlg_action
