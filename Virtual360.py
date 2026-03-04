@@ -385,11 +385,10 @@ def show_login():
                 st.rerun()
             else:
                 st.error("Invalid username or password.")
-                # Show available usernames to help debug domain suffix issues
-                if username and username not in users:
-                    available = [u for u in users if u.split("@")[0] == username.split("@")[0]]
-                    if available:
-                        st.info(f"Did you mean: `{available[0]}`?")
+                st.write("**Debug — users in DB:**", list(users.keys()))
+                st.write("**Attempted username:**", repr(username))
+                st.write("**Password hash match:**",
+                         users.get(username, {}).get("password_hash") == hash_pw(password) if username in users else "user not found")
 
         st.markdown("</div>", unsafe_allow_html=True)
         st.markdown(
