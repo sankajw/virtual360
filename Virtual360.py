@@ -253,6 +253,27 @@ def update_tenant_type_in_db(tenant_name: str, new_type: str):
         conn.commit()
 
 
+def rename_tenant_in_db(old_name: str, new_name: str, new_type: str):
+    with get_db() as conn:
+        conn.execute("UPDATE tenants SET tenant_name=?, tenant_type=? WHERE tenant_name=?",
+                     (new_name, new_type, old_name))
+        conn.execute("UPDATE assessments SET tenant_name=? WHERE tenant_name=?",
+                     (new_name, old_name))
+        conn.execute("UPDATE assessment_data SET tenant_name=? WHERE tenant_name=?",
+                     (new_name, old_name))
+        conn.commit()
+    # Update tenant_access in all users
+    with get_db() as conn:
+        users = conn.execute("SELECT username, tenant_access FROM users").fetchall()
+        for u in users:
+            access = json.loads(u["tenant_access"])
+            if old_name in access:
+                access = [new_name if t == old_name else t for t in access]
+                conn.execute("UPDATE users SET tenant_access=? WHERE username=?",
+                             (json.dumps(access), u["username"]))
+        conn.commit()
+
+
 def load_tenant_types_from_db() -> list:
     """Return sorted list of tenant type strings from the DB."""
     with get_db() as conn:
@@ -695,6 +716,16 @@ _CATS   = ["Suite/Room", "Restaurant & Bar", "Lobby",
 
 # ── User dialogs ──────────────────────────────────────────────────────
 
+# ═══════════════════════════════════════════════════════════════════
+# MODULE-LEVEL DIALOGS
+# ═══════════════════════════════════════════════════════════════════
+
+_DOMAIN = "@dexxora360"
+_CATS   = ["Suite/Room", "Restaurant & Bar", "Lobby",
+           "Function Venue", "Outdoor", "Gym", "Other"]
+
+# ── User dialogs ──────────────────────────────────────────────────
+
 @st.dialog("➕ Add New User", width="large")
 def dlg_add_user():
     with st.form("dlg_add_user_form", clear_on_submit=True):
@@ -711,9 +742,11 @@ def dlg_add_user():
         nh  = st.multiselect("Tenant Access", get_tenant_names(), default=get_tenant_names()[:1])
         np1 = st.text_input("Password",         type="password")
         np2 = st.text_input("Confirm Password", type="password")
-        c1, c2 = st.columns(2)
-        add = c1.form_submit_button("✅ Add User", use_container_width=True, type="primary")
-        c2.form_submit_button("✖ Cancel", use_container_width=True)
+        add = st.form_submit_button("✅ Add User", use_container_width=True, type="primary")
+    if st.button("✖ Cancel", key="dlg_add_user_cancel", use_container_width=True):
+        st.session_state._dlg_action = None
+        st.session_state._dlg_target = None
+        st.rerun()
     if add:
         nu = (nu_prefix.strip() + _DOMAIN) if nu_prefix.strip() else ""
         if not nu_prefix.strip() or not np1:
@@ -749,9 +782,11 @@ def dlg_edit_user(username):
         eu_role   = st.selectbox("Role", ["user", "admin"],
                                  index=0 if ud.get("role") == "user" else 1)
         eu_access = st.multiselect("Tenant Access", valid_tenants, default=safe_acc)
-        c1, c2 = st.columns(2)
-        save = c1.form_submit_button("✅ Save", use_container_width=True, type="primary")
-        c2.form_submit_button("✖ Cancel", use_container_width=True)
+        save = st.form_submit_button("✅ Save", use_container_width=True, type="primary")
+    if st.button("✖ Cancel", key="dlg_edit_user_cancel", use_container_width=True):
+        st.session_state._dlg_action = None
+        st.session_state._dlg_target = None
+        st.rerun()
     if save:
         if not eu_access:
             st.error("Select at least one tenant.")
@@ -773,9 +808,11 @@ def dlg_change_pw(username):
     with st.form("dlg_pw_form", clear_on_submit=True):
         p1 = st.text_input("New Password",     type="password")
         p2 = st.text_input("Confirm Password", type="password")
-        c1, c2 = st.columns(2)
-        save = c1.form_submit_button("✅ Update", use_container_width=True, type="primary")
-        c2.form_submit_button("✖ Cancel", use_container_width=True)
+        save = st.form_submit_button("✅ Update Password", use_container_width=True, type="primary")
+    if st.button("✖ Cancel", key="dlg_pw_cancel", use_container_width=True):
+        st.session_state._dlg_action = None
+        st.session_state._dlg_target = None
+        st.rerun()
     if save:
         if not p1:
             st.error("Password cannot be empty.")
@@ -803,13 +840,13 @@ def dlg_delete_user(username):
         st.session_state._dlg_action = None
         st.session_state._dlg_target = None
         st.rerun()
-    if c2.button("✖ Cancel", use_container_width=True):
+    if c2.button("✖ Cancel", key="dlg_del_user_cancel", use_container_width=True):
         st.session_state._dlg_action = None
         st.session_state._dlg_target = None
         st.rerun()
 
 
-# ── Tenant dialogs ────────────────────────────────────────────────────
+# ── Tenant dialogs ────────────────────────────────────────────────
 
 @st.dialog("➕ Add New Tenant", width="large")
 def dlg_add_tenant():
@@ -817,9 +854,11 @@ def dlg_add_tenant():
     with st.form("dlg_add_tenant", clear_on_submit=True):
         tn = st.text_input("Tenant Name", placeholder="e.g. Marina Bay Tower")
         tt = st.selectbox("Tenant Type", live_types if live_types else ["(no types defined)"])
-        c1, c2 = st.columns(2)
-        add = c1.form_submit_button("✅ Add", use_container_width=True, type="primary")
-        c2.form_submit_button("✖ Cancel", use_container_width=True)
+        add = st.form_submit_button("✅ Add Tenant", use_container_width=True, type="primary")
+    if st.button("✖ Cancel", key="dlg_add_tenant_cancel", use_container_width=True):
+        st.session_state._tdlg_action = None
+        st.session_state._tdlg_target = None
+        st.rerun()
     if add:
         name = tn.strip()
         if not name:
@@ -842,19 +881,28 @@ def dlg_edit_tenant(tenant_name):
     cur_type   = cur_map.get(tenant_name, "")
     safe_idx   = live_types.index(cur_type) if cur_type in live_types else 0
     with st.form("dlg_edit_tenant", clear_on_submit=False):
-        st.markdown(f"**Tenant:** `{tenant_name}`")
+        new_name = st.text_input("Tenant Name", value=tenant_name)
         new_type = st.selectbox("Tenant Type",
                                 live_types if live_types else ["(no types)"],
                                 index=safe_idx)
-        c1, c2 = st.columns(2)
-        save = c1.form_submit_button("✅ Save", use_container_width=True, type="primary")
-        c2.form_submit_button("✖ Cancel", use_container_width=True)
-    if save:
-        update_tenant_type_in_db(tenant_name, new_type)
-        st.session_state.tenants      = load_tenants_from_db()
+        save = st.form_submit_button("✅ Save", use_container_width=True, type="primary")
+    if st.button("✖ Cancel", key="dlg_edit_tenant_cancel", use_container_width=True):
         st.session_state._tdlg_action = None
         st.session_state._tdlg_target = None
         st.rerun()
+    if save:
+        new_name = new_name.strip()
+        if not new_name:
+            st.error("Tenant name cannot be empty.")
+        elif new_name != tenant_name and new_name in get_tenant_names():
+            st.error("A tenant with that name already exists.")
+        else:
+            rename_tenant_in_db(tenant_name, new_name, new_type)
+            st.session_state.tenants      = load_tenants_from_db()
+            st.session_state.users        = load_users_from_db()
+            st.session_state._tdlg_action = None
+            st.session_state._tdlg_target = None
+            st.rerun()
 
 
 @st.dialog("🗑️ Delete Tenant", width="medium")
@@ -873,7 +921,7 @@ def dlg_delete_tenant(tenant_name):
         st.session_state._tdlg_action = None
         st.session_state._tdlg_target = None
         st.rerun()
-    if c2.button("✖ Cancel", use_container_width=True):
+    if c2.button("✖ Cancel", key="dlg_del_tenant_cancel", use_container_width=True):
         st.session_state._tdlg_action = None
         st.session_state._tdlg_target = None
         st.rerun()
@@ -889,11 +937,10 @@ def dlg_manage_types():
     else:
         st.info("No types defined.")
     st.markdown("---")
+    st.markdown("**Add New Type**")
     with st.form("dlg_add_type", clear_on_submit=True):
-        new_t = st.text_input("Add New Type", placeholder="e.g. Co-Working")
-        ca, cb = st.columns(2)
-        add_t = ca.form_submit_button("➕ Add", use_container_width=True, type="primary")
-        cb.form_submit_button("Close", use_container_width=True)
+        new_t = st.text_input("Type Name", placeholder="e.g. Co-Working")
+        add_t = st.form_submit_button("➕ Add Type", use_container_width=True, type="primary")
     if add_t:
         nt = new_t.strip()
         if not nt:
@@ -904,21 +951,23 @@ def dlg_manage_types():
             add_tenant_type_to_db(nt)
             st.session_state.tenant_types = load_tenant_types_from_db()
             st.rerun()
-    st.markdown("---")
-    st.markdown("**Delete a Type**")
     if cur_types:
+        st.markdown("---")
+        st.markdown("**Delete a Type**")
         with st.form("dlg_del_type", clear_on_submit=True):
             del_t = st.selectbox("Select Type to Delete", cur_types)
-            cd1, cd2 = st.columns(2)
-            del_btn = cd1.form_submit_button("🗑️ Delete", type="primary", use_container_width=True)
-            cd2.form_submit_button("Cancel", use_container_width=True)
+            del_btn = st.form_submit_button("🗑️ Delete Selected Type", type="primary", use_container_width=True)
         if del_btn:
             delete_tenant_type_from_db(del_t)
             st.session_state.tenant_types = load_tenant_types_from_db()
             st.rerun()
+    st.markdown("---")
+    if st.button("✖ Close", key="dlg_types_close", use_container_width=True):
+        st.session_state._tdlg_action = None
+        st.rerun()
 
 
-# ── Assessment dialogs ────────────────────────────────────────────────
+# ── Assessment dialogs ────────────────────────────────────────────
 
 @st.dialog("➕ New Assessment", width="large")
 def dlg_new_assessment():
@@ -929,9 +978,10 @@ def dlg_new_assessment():
     with st.form("frm_new_assessment", clear_on_submit=True):
         aname = st.text_input("Assessment Name", placeholder="e.g. Q1 Floor Survey 2025")
         tname = st.selectbox("Tenant", tenants_for_form if tenants_for_form else ["(no tenants)"])
-        sb1, sb2 = st.columns(2)
-        ok  = sb1.form_submit_button("✅ Create", type="primary", use_container_width=True)
-        sb2.form_submit_button("✖ Cancel", use_container_width=True)
+        ok = st.form_submit_button("✅ Create Assessment", type="primary", use_container_width=True)
+    if st.button("✖ Cancel", key="dlg_new_assess_cancel", use_container_width=True):
+        st.session_state._adlg_action = None
+        st.rerun()
     if ok:
         if not aname.strip():
             st.error("Assessment Name is required.")
@@ -955,9 +1005,11 @@ def dlg_edit_assessment(a):
     with st.form("frm_edit_assessment"):
         aname = st.text_input("Assessment Name", value=a["assessment_name"])
         tname = st.selectbox("Tenant", tenants_for_form, index=t_idx)
-        sb1, sb2 = st.columns(2)
-        ok  = sb1.form_submit_button("✅ Save", type="primary", use_container_width=True)
-        sb2.form_submit_button("✖ Cancel", use_container_width=True)
+        ok = st.form_submit_button("✅ Save", type="primary", use_container_width=True)
+    if st.button("✖ Cancel", key="dlg_edit_assess_cancel", use_container_width=True):
+        st.session_state._adlg_action = None
+        st.session_state._adlg_target = None
+        st.rerun()
     if ok:
         if not aname.strip():
             st.error("Assessment Name is required.")
@@ -982,7 +1034,7 @@ def dlg_delete_assessment(a):
         st.session_state._adlg_action = None
         st.session_state._adlg_target = None
         st.rerun()
-    if c2.button("✖ Cancel", use_container_width=True):
+    if c2.button("✖ Cancel", key="dlg_del_assess_cancel", use_container_width=True):
         st.session_state._adlg_action = None
         st.session_state._adlg_target = None
         st.rerun()
@@ -996,9 +1048,10 @@ def dlg_add_area():
         aname = c1.text_input("Area Name", placeholder="e.g. Main Lobby")
         cat   = c2.selectbox("Category", _CATS)
         sqft  = st.number_input("Coverage (SQFT)", min_value=0.0, step=0.5)
-        sb1, sb2 = st.columns(2)
-        ok  = sb1.form_submit_button("✅ Add Area", type="primary", use_container_width=True)
-        sb2.form_submit_button("✖ Cancel", use_container_width=True)
+        ok = st.form_submit_button("✅ Add Area", type="primary", use_container_width=True)
+    if st.button("✖ Cancel", key="dlg_add_area_cancel", use_container_width=True):
+        st.session_state._adlg_action = None
+        st.rerun()
     if ok:
         if not aname.strip() or sqft <= 0:
             st.error("Area Name and SQFT > 0 required.")
@@ -1017,9 +1070,11 @@ def dlg_edit_area(area):
         cat   = c2.selectbox("Category", _CATS, index=cur_idx)
         sqft  = st.number_input("Coverage (SQFT)", value=float(area["sqft"]),
                                 min_value=0.0, step=0.5)
-        sb1, sb2 = st.columns(2)
-        ok  = sb1.form_submit_button("✅ Save", type="primary", use_container_width=True)
-        sb2.form_submit_button("✖ Cancel", use_container_width=True)
+        ok = st.form_submit_button("✅ Save Changes", type="primary", use_container_width=True)
+    if st.button("✖ Cancel", key="dlg_edit_area_cancel", use_container_width=True):
+        st.session_state._adlg_action = None
+        st.session_state._adlg_target = None
+        st.rerun()
     if ok:
         if not aname.strip() or sqft <= 0:
             st.error("Area Name and SQFT > 0 required.")
@@ -1039,12 +1094,10 @@ def dlg_delete_area(area):
         st.session_state._adlg_action = None
         st.session_state._adlg_target = None
         st.rerun()
-    if c2.button("✖ Cancel", use_container_width=True):
+    if c2.button("✖ Cancel", key="dlg_del_area_cancel", use_container_width=True):
         st.session_state._adlg_action = None
         st.session_state._adlg_target = None
         st.rerun()
-
-
 
 
 def show_login():
