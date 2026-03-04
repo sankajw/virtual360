@@ -82,6 +82,24 @@ def init_db():
             )
         """)
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS assessments (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                assessment_name TEXT NOT NULL,
+                tenant_name     TEXT NOT NULL,
+                date_added      TEXT NOT NULL,
+                created_by      TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS assessment_areas (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                assessment_id   INTEGER NOT NULL REFERENCES assessments(id),
+                area_name       TEXT NOT NULL,
+                category        TEXT NOT NULL,
+                sqft            REAL NOT NULL
+            )
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS assessment_data (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 date_added      TEXT NOT NULL,
@@ -231,107 +249,149 @@ def delete_tenant_type_from_db(type_name: str):
         conn.commit()
 
 
-# ── Assessment Data ───────────────────────────────────────────────
+# ── Assessment Data ─────────────────────────────────────────────
 
-# ── Assessment Data ───────────────────────────────────────────────
+def create_assessment(assessment_name: str, tenant_name: str, created_by: str) -> int:
+    """Create an assessment header, return its id."""
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO assessments (assessment_name, tenant_name, date_added, created_by) VALUES (?,?,?,?)",
+            (assessment_name, tenant_name, date_str, created_by)
+        )
+        conn.commit()
+        row = conn.execute("SELECT last_insert_rowid()").fetchone()
+        return row[0]
 
-def load_assessment_from_db(created_by: str = None) -> pd.DataFrame:
-    """Load assessments. If created_by given, filter to that user; else return all."""
+
+def update_assessment_header(assessment_id: int, assessment_name: str, tenant_name: str):
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE assessments SET assessment_name=?, tenant_name=? WHERE id=?",
+            (assessment_name, tenant_name, assessment_id)
+        )
+        conn.commit()
+
+
+def delete_assessment(assessment_id: int):
+    with get_db() as conn:
+        conn.execute("DELETE FROM assessment_areas WHERE assessment_id=?", (assessment_id,))
+        conn.execute("DELETE FROM assessments WHERE id=?", (assessment_id,))
+        conn.commit()
+
+
+def load_assessments(created_by: str = None) -> list:
+    """Return list of assessment header dicts, optionally filtered by creator."""
     with get_db() as conn:
         if created_by:
             rows = conn.execute(
-                "SELECT id, date_added, tenant_name, area_name, category, sqft, "
-                "created_by, assessment_name FROM assessment_data "
-                "WHERE created_by = ? ORDER BY id", (created_by,)
+                "SELECT id, assessment_name, tenant_name, date_added, created_by "
+                "FROM assessments WHERE created_by=? ORDER BY id DESC", (created_by,)
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT id, date_added, tenant_name, area_name, category, sqft, "
-                "created_by, assessment_name FROM assessment_data ORDER BY id"
+                "SELECT id, assessment_name, tenant_name, date_added, created_by "
+                "FROM assessments ORDER BY id DESC"
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_area_to_assessment(assessment_id: int, area_name: str, category: str, sqft: float) -> int:
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO assessment_areas (assessment_id, area_name, category, sqft) VALUES (?,?,?,?)",
+            (assessment_id, area_name, category, sqft)
+        )
+        conn.commit()
+        row = conn.execute("SELECT last_insert_rowid()").fetchone()
+        return row[0]
+
+
+def update_area(area_id: int, area_name: str, category: str, sqft: float):
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE assessment_areas SET area_name=?, category=?, sqft=? WHERE id=?",
+            (area_name, category, sqft, area_id)
+        )
+        conn.commit()
+
+
+def delete_area(area_id: int):
+    with get_db() as conn:
+        conn.execute("DELETE FROM assessment_areas WHERE id=?", (area_id,))
+        conn.commit()
+
+
+def load_areas(assessment_id: int) -> list:
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, area_name, category, sqft FROM assessment_areas WHERE assessment_id=? ORDER BY id",
+            (assessment_id,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_assessment_summary(assessment_id: int) -> dict:
+    """Return area count and total sqft for an assessment."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt, COALESCE(SUM(sqft),0) as total "
+            "FROM assessment_areas WHERE assessment_id=?", (assessment_id,)
+        ).fetchone()
+    return {"count": row["cnt"], "total_sqft": row["total"]}
+
+
+# Legacy compatibility — kept for admin export tab
+def load_assessment_from_db(created_by: str = None) -> pd.DataFrame:
+    """Flat view joining assessments + areas."""
+    with get_db() as conn:
+        if created_by:
+            rows = conn.execute(
+                "SELECT a.id as assessment_id, a.assessment_name, a.tenant_name, "
+                "a.date_added, a.created_by, "
+                "ar.id as area_id, ar.area_name, ar.category, ar.sqft "
+                "FROM assessments a JOIN assessment_areas ar ON ar.assessment_id=a.id "
+                "WHERE a.created_by=? ORDER BY a.id, ar.id", (created_by,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT a.id as assessment_id, a.assessment_name, a.tenant_name, "
+                "a.date_added, a.created_by, "
+                "ar.id as area_id, ar.area_name, ar.category, ar.sqft "
+                "FROM assessments a JOIN assessment_areas ar ON ar.assessment_id=a.id "
+                "ORDER BY a.id, ar.id"
             ).fetchall()
     if rows:
         return pd.DataFrame([dict(r) for r in rows])
-    return pd.DataFrame(columns=["id","date_added","tenant_name","area_name",
-                                  "category","sqft","created_by","assessment_name"])
+    return pd.DataFrame(columns=["assessment_id","assessment_name","tenant_name","date_added",
+                                  "created_by","area_id","area_name","category","sqft"])
 
 
-def save_assessment_row_to_db(date_added, tenant_name, area_name, category,
-                               sqft, created_by="", assessment_name=""):
-    with get_db() as conn:
-        conn.execute(
-            "INSERT INTO assessment_data "
-            "(date_added, tenant_name, area_name, category, sqft, created_by, assessment_name) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (date_added, tenant_name, area_name, category, sqft, created_by, assessment_name)
-        )
-        conn.commit()
-    # Return the new row's id
-    with get_db() as conn:
-        row = conn.execute("SELECT last_insert_rowid()").fetchone()
-        return row[0] if row else None
-
-
-def update_assessment_row_in_db(row_id: int, area_name: str, category: str,
-                                 sqft: float, assessment_name: str):
-    with get_db() as conn:
-        conn.execute(
-            "UPDATE assessment_data SET area_name=?, category=?, sqft=?, assessment_name=? "
-            "WHERE id=?",
-            (area_name, category, sqft, assessment_name, row_id)
-        )
-        conn.commit()
-
-
-def delete_assessment_row_in_db(row_id: int):
-    with get_db() as conn:
-        conn.execute("DELETE FROM assessment_data WHERE id=?", (row_id,))
-        conn.commit()
-
-
-def delete_assessment_rows_for_tenants(tenant_names: list):
-    placeholders = ",".join("?" * len(tenant_names))
-    with get_db() as conn:
-        conn.execute(f"DELETE FROM assessment_data WHERE tenant_name IN ({placeholders})",
-                     tenant_names)
-        conn.commit()
-
-
+def save_assessment_row_to_db(*a, **kw): pass   # legacy no-op
+def delete_assessment_rows_for_tenants(tenant_names): pass  # legacy no-op
 def delete_all_assessment_data():
     with get_db() as conn:
-        conn.execute("DELETE FROM assessment_data")
+        conn.execute("DELETE FROM assessment_areas")
+        conn.execute("DELETE FROM assessments")
         conn.commit()
-
-
-def save_full_assessment_to_db(df: pd.DataFrame):
-    """Overwrite all assessment data in DB from a DataFrame (legacy compat)."""
-    with get_db() as conn:
-        conn.execute("DELETE FROM assessment_data")
-        for _, row in df.iterrows():
-            conn.execute(
-                "INSERT INTO assessment_data "
-                "(date_added, tenant_name, area_name, category, sqft, created_by, assessment_name) "
-                "VALUES (?,?,?,?,?,?,?)",
-                (str(row.get("Date Added", "")), str(row.get("Tenant Name", "")),
-                 str(row.get("Name of Area", "")), str(row.get("Category", "")),
-                 float(row.get("Coverage (SQFT)", 0)),
-                 str(row.get("Created By", "")), str(row.get("Assessment Name", "")))
-            )
-        conn.commit()
+def save_full_assessment_to_db(df): pass  # legacy no-op
 
 
 def db_to_display_df(db_df: pd.DataFrame) -> pd.DataFrame:
     if db_df.empty:
-        return pd.DataFrame(columns=["ID","Assessment Name","Date Added","Tenant Name",
-                                      "Name of Area","Category","Coverage (SQFT)","Created By"])
+        return pd.DataFrame(columns=["Assessment ID","Assessment Name","Tenant Name",
+                                      "Date Added","Created By","Area ID",
+                                      "Name of Area","Category","Coverage (SQFT)"])
     return db_df.rename(columns={
-        "id":              "ID",
+        "assessment_id":   "Assessment ID",
         "assessment_name": "Assessment Name",
-        "date_added":      "Date Added",
         "tenant_name":     "Tenant Name",
+        "date_added":      "Date Added",
+        "created_by":      "Created By",
+        "area_id":         "Area ID",
         "area_name":       "Name of Area",
         "category":        "Category",
         "sqft":            "Coverage (SQFT)",
-        "created_by":      "Created By",
     })
 
 
@@ -1038,20 +1098,19 @@ def show_admin_panel():
         # ── TAB 3 : All Tenant Data ───────────────────────────────────────
     with tab_data:
         st.subheader("All Assessment Records")
-        all_df = db_to_display_df(load_assessment_from_db())
-        if all_df.empty:
+        flat_df = load_assessment_from_db()
+        if flat_df.empty:
             st.info("No assessment data recorded yet.")
         else:
-            hf = st.multiselect(
-                "Filter by Tenant", get_tenant_names(),
-                default=get_tenant_names(), key="adm_hf",
-            )
-            vdf = all_df[all_df["Tenant Name"].isin(hf)]
+            disp = db_to_display_df(flat_df)
+            hf = st.multiselect("Filter by Tenant", get_tenant_names(),
+                                default=get_tenant_names(), key="adm_hf")
+            vdf = disp[disp["Tenant Name"].isin(hf)]
             st.dataframe(vdf, use_container_width=True, hide_index=True)
             c1, c2, c3 = st.columns(3)
-            c1.metric("Total Records", len(vdf))
-            c2.metric("Total SQFT",    f"{vdf['Coverage (SQFT)'].sum():,.1f}")
-            c3.metric("Tenants",       vdf["Tenant Name"].nunique())
+            c1.metric("Assessments", vdf["Assessment ID"].nunique())
+            c2.metric("Total Areas", len(vdf))
+            c3.metric("Total SQFT",  f"{vdf['Coverage (SQFT)'].sum():,.1f}")
 
         st.markdown("---")
         if st.button("🗑️ Clear ALL Data", type="primary"):
@@ -1062,19 +1121,19 @@ def show_admin_panel():
     # ── TAB 4 : Export Reports ────────────────────────────────────────
     with tab_export:
         st.subheader("Export Assessment Report")
-        all_df = db_to_display_df(load_assessment_from_db())
-        if all_df.empty:
+        flat_df = load_assessment_from_db()
+        if flat_df.empty:
             st.info("No data to export yet.")
         else:
-            eh = st.multiselect(
-                "Include Tenants", get_tenant_names(),
-                default=get_tenant_names(), key="adm_eh",
-            )
-            edf = all_df[all_df["Tenant Name"].isin(eh)]
+            disp = db_to_display_df(flat_df)
+            eh = st.multiselect("Include Tenants", get_tenant_names(),
+                                default=get_tenant_names(), key="adm_eh")
+            edf = disp[disp["Tenant Name"].isin(eh)]
             if not edf.empty:
+                pdf_cols = ["Assessment Name","Tenant Name","Date Added","Name of Area","Category","Coverage (SQFT)"]
                 st.download_button(
                     label="📥 Download PDF Report",
-                    data=generate_pdf(edf.drop(columns=["ID","Created By"], errors="ignore")),
+                    data=generate_pdf(edf[[c for c in pdf_cols if c in edf.columns]]),
                     file_name=f"Dexxora_Assessment_{datetime.now():%Y%m%d}.pdf",
                     mime="application/pdf",
                 )
@@ -1085,11 +1144,12 @@ def show_admin_panel():
 # ASSESSMENT PAGE
 # ─────────────────────────────────────────────
 def show_assessment():
-    is_admin     = st.session_state.current_role == "admin"
-    current_user = st.session_state.current_user
-    user_data    = st.session_state.users[current_user]
+    is_admin      = st.session_state.current_role == "admin"
+    current_user  = st.session_state.current_user
+    user_data     = st.session_state.users[current_user]
     tenant_access = user_data["tenant_access"]
-    short_user   = current_user.split("@")[0] if "@" in current_user else current_user
+    CATS = ["Suite/Room", "Restaurant & Bar", "Lobby",
+            "Function Venue", "Outdoor", "Gym", "Other"]
 
     st.markdown(
         f"<img src='data:image/png;base64,{LOGO_FULL_B64}' "
@@ -1099,198 +1159,346 @@ def show_assessment():
     st.title("Virtual360 Cost Assessment")
     st.markdown("---")
 
-    # ── Dialogs ───────────────────────────────────────────────────────
+    # ── Session state init ────────────────────────────────────────────
+    for k, v in [("_adlg_action", None), ("_adlg_target", None),
+                 ("_open_assessment", None)]:
+        if k not in st.session_state:
+            st.session_state[k] = v
 
-    @st.dialog("➕ New Assessment Entry")
-    def dialog_add_entry():
-        cats = ["Suite/Room", "Restaurant & Bar", "Lobby",
-                "Function Venue", "Outdoor", "Gym", "Other"]
-        tenants_for_form = get_tenant_names() if is_admin else tenant_access
-        with st.form("dlg_add_entry", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            aname = c1.text_input("Assessment Name", placeholder="e.g. Floor 3 Survey")
-            tname = c2.selectbox("Tenant", tenants_for_form)
-            c3, c4 = st.columns(2)
-            area  = c3.text_input("Area Name", placeholder="e.g. Main Lobby")
-            cat   = c4.selectbox("Category", cats)
-            sqft  = st.number_input("Coverage (SQFT)", min_value=0.0, step=1.0)
-            sb1, sb2 = st.columns(2)
-            add = sb1.form_submit_button("✅ Add", use_container_width=True, type="primary")
-            sb2.form_submit_button("✖ Cancel", use_container_width=True)
-        if add:
-            if not area or sqft <= 0:
-                st.error("Area Name and SQFT > 0 are required.")
-            else:
-                date_str = datetime.now().strftime("%Y-%m-%d")
-                save_assessment_row_to_db(
-                    date_str, tname, area, cat, sqft,
-                    created_by=current_user,
-                    assessment_name=aname.strip()
-                )
-                st.session_state.last_category = cat
-                st.session_state._adlg_action  = None
-                st.session_state.pop("_assess_df", None)
-                st.rerun()
+    # ─────────────────────────────────────────────────────────────────
+    # DETAIL VIEW  — open assessment with area management
+    # ─────────────────────────────────────────────────────────────────
+    if st.session_state._open_assessment is not None:
+        aid = st.session_state._open_assessment
+        # Load header
+        with get_db() as conn:
+            hdr = conn.execute(
+                "SELECT id, assessment_name, tenant_name, date_added, created_by "
+                "FROM assessments WHERE id=?", (aid,)
+            ).fetchone()
+        if not hdr:
+            st.session_state._open_assessment = None
+            st.rerun()
 
-    @st.dialog("✏️ Edit Entry")
-    def dialog_edit_entry(row_id, row_data):
-        cats = ["Suite/Room", "Restaurant & Bar", "Lobby",
-                "Function Venue", "Outdoor", "Gym", "Other"]
-        cur_cat_idx = cats.index(row_data["Category"]) if row_data["Category"] in cats else 0
-        st.markdown(f"**ID:** `{row_id}` &nbsp;|&nbsp; **Tenant:** {row_data['Tenant Name']}")
-        with st.form("dlg_edit_entry"):
-            aname = st.text_input("Assessment Name", value=row_data.get("Assessment Name",""))
-            area  = st.text_input("Area Name", value=row_data["Name of Area"])
+        hdr = dict(hdr)
+        areas = load_areas(aid)
+        total_sqft = sum(a["sqft"] for a in areas)
+
+        # ── Back button ───────────────────────────────────────────────
+        if st.button("← Back to Assessments"):
+            st.session_state._open_assessment = None
+            st.rerun()
+
+        st.markdown(f"## 📋 {hdr['assessment_name']}")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Tenant",       hdr["tenant_name"])
+        m2.metric("Date",         hdr["date_added"])
+        m3.metric("Areas",        len(areas))
+        m4.metric("Total SQFT",   f"{total_sqft:,.1f}")
+        if is_admin:
+            creator = str(hdr.get("created_by","")).split("@")[0]
+            st.caption(f"Created by: **{creator}**")
+        st.markdown("---")
+
+        # ── Dialogs for area CRUD ─────────────────────────────────────
+        @st.dialog("➕ Add Area")
+        def dialog_add_area():
+            with st.form("frm_add_area", clear_on_submit=True):
+                c1, c2 = st.columns(2)
+                aname = c1.text_input("Area Name", placeholder="e.g. Main Lobby")
+                cat   = c2.selectbox("Category", CATS)
+                sqft  = st.number_input("Coverage (SQFT)", min_value=0.0, step=0.5)
+                sb1, sb2 = st.columns(2)
+                ok  = sb1.form_submit_button("✅ Add Area", type="primary", use_container_width=True)
+                sb2.form_submit_button("✖ Cancel", use_container_width=True)
+            if ok:
+                if not aname.strip() or sqft <= 0:
+                    st.error("Area Name and SQFT > 0 required.")
+                else:
+                    add_area_to_assessment(aid, aname.strip(), cat, sqft)
+                    st.session_state._adlg_action = None
+                    st.rerun()
+
+        @st.dialog("✏️ Edit Area")
+        def dialog_edit_area(area):
+            cur_idx = CATS.index(area["category"]) if area["category"] in CATS else 0
+            with st.form("frm_edit_area"):
+                c1, c2 = st.columns(2)
+                aname = c1.text_input("Area Name", value=area["area_name"])
+                cat   = c2.selectbox("Category", CATS, index=cur_idx)
+                sqft  = st.number_input("Coverage (SQFT)", value=float(area["sqft"]),
+                                        min_value=0.0, step=0.5)
+                sb1, sb2 = st.columns(2)
+                ok  = sb1.form_submit_button("✅ Save", type="primary", use_container_width=True)
+                sb2.form_submit_button("✖ Cancel", use_container_width=True)
+            if ok:
+                if not aname.strip() or sqft <= 0:
+                    st.error("Area Name and SQFT > 0 required.")
+                else:
+                    update_area(area["id"], aname.strip(), cat, sqft)
+                    st.session_state._adlg_action = None
+                    st.session_state._adlg_target = None
+                    st.rerun()
+
+        @st.dialog("🗑️ Delete Area")
+        def dialog_delete_area(area):
+            st.warning(f"Delete area **{area['area_name']}**?", icon="⚠️")
             c1, c2 = st.columns(2)
-            cat  = c1.form_submit_button and c1.selectbox("Category", cats, index=cur_cat_idx)
-            sqft = c2.number_input("Coverage (SQFT)", value=float(row_data["Coverage (SQFT)"]),
-                                   min_value=0.0, step=1.0)
-            sb1, sb2 = st.columns(2)
-            save = sb1.form_submit_button("✅ Save", use_container_width=True, type="primary")
-            sb2.form_submit_button("✖ Cancel", use_container_width=True)
-        if save:
-            if not area or sqft <= 0:
-                st.error("Area Name and SQFT > 0 required.")
-            else:
-                update_assessment_row_in_db(row_id, area, cat, sqft, aname.strip())
+            if c1.button("🗑️ Yes, Delete", type="primary", use_container_width=True):
+                delete_area(area["id"])
                 st.session_state._adlg_action = None
                 st.session_state._adlg_target = None
-                st.session_state.pop("_assess_df", None)
+                st.rerun()
+            if c2.button("✖ Cancel", use_container_width=True):
+                st.session_state._adlg_action = None
+                st.session_state._adlg_target = None
                 st.rerun()
 
-    @st.dialog("🗑️ Delete Entry")
-    def dialog_delete_entry(row_id, row_data):
+        # ── Add area button ───────────────────────────────────────────
+        ab1, ab2, _ = st.columns([1.2, 1.2, 4])
+        if ab1.button("➕ Add Area", type="primary", use_container_width=True):
+            st.session_state._adlg_action = "add_area"
+            st.session_state._adlg_target = None
+
+        # Export areas as PDF
+        if areas and ab2.button("📥 Export PDF", use_container_width=True):
+            pdf_df = pd.DataFrame(areas).rename(columns={
+                "area_name": "Area Name", "category": "Category", "sqft": "Coverage (SQFT)"
+            })[["Area Name","Category","Coverage (SQFT)"]]
+            st.download_button(
+                "⬇ Download",
+                data=generate_pdf(pdf_df),
+                file_name=f"{hdr['assessment_name'].replace(' ','_')}_{datetime.now():%Y%m%d}.pdf",
+                mime="application/pdf",
+            )
+
+        st.markdown("")
+
+        # ── Areas grid ────────────────────────────────────────────────
+        if not areas:
+            st.info("No areas yet — click **➕ Add Area** to start.")
+        else:
+            # Header row
+            h_cols = st.columns([0.5, 3, 2.5, 1.5, 1.5])
+            for col, lbl in zip(h_cols, ["#", "Area Name", "Category", "SQFT", "Actions"]):
+                col.markdown(f"**{lbl}**")
+            st.markdown("<hr style='margin:4px 0 6px;'>", unsafe_allow_html=True)
+
+            for i, area in enumerate(areas, 1):
+                rc = st.columns([0.5, 3, 2.5, 1.5, 1.5])
+                rc[0].markdown(str(i))
+                rc[1].markdown(area["area_name"])
+
+                cat_colors = {
+                    "Suite/Room": "#1565C0", "Restaurant & Bar": "#6A1B9A",
+                    "Lobby": "#00695C", "Function Venue": "#E65100",
+                    "Outdoor": "#2E7D32", "Gym": "#AD1457", "Other": "#546E7A"
+                }
+                c = cat_colors.get(area["category"], "#546E7A")
+                rc[2].markdown(
+                    f"<span style='background:{c};color:#fff;padding:2px 10px;"
+                    f"border-radius:12px;font-size:.8rem;'>{area['category']}</span>",
+                    unsafe_allow_html=True
+                )
+                rc[3].markdown(f"{area['sqft']:,.1f}")
+                btn1, btn2 = rc[4].columns(2)
+                if btn1.button("✏️", key=f"area_edit_{area['id']}", help="Edit"):
+                    st.session_state._adlg_action = "edit_area"
+                    st.session_state._adlg_target = area["id"]
+                if btn2.button("🗑️", key=f"area_del_{area['id']}", help="Delete"):
+                    st.session_state._adlg_action = "del_area"
+                    st.session_state._adlg_target = area["id"]
+
+            st.markdown("<hr style='margin:6px 0;'>", unsafe_allow_html=True)
+            tot_cols = st.columns([0.5, 3, 2.5, 1.5, 1.5])
+            tot_cols[0].markdown("**Σ**")
+            tot_cols[1].markdown(f"**{len(areas)} areas**")
+            tot_cols[3].markdown(f"**{total_sqft:,.1f}**")
+
+        # ── Open area dialogs ─────────────────────────────────────────
+        aact = st.session_state._adlg_action
+        atgt = st.session_state._adlg_target
+
+        if aact == "add_area":
+            dialog_add_area()
+        elif aact == "edit_area" and atgt:
+            target_area = next((a for a in areas if a["id"] == atgt), None)
+            if target_area:
+                dialog_edit_area(target_area)
+        elif aact == "del_area" and atgt:
+            target_area = next((a for a in areas if a["id"] == atgt), None)
+            if target_area:
+                dialog_delete_area(target_area)
+
+        return   # Don't show list view when detail is open
+
+    # ─────────────────────────────────────────────────────────────────
+    # LIST VIEW  — assessment cards/grid
+    # ─────────────────────────────────────────────────────────────────
+
+    # ── Dialogs for assessment CRUD ───────────────────────────────────
+    @st.dialog("➕ New Assessment")
+    def dialog_new_assessment():
+        tenants_for_form = get_tenant_names() if is_admin else tenant_access
+        with st.form("frm_new_assessment", clear_on_submit=True):
+            aname = st.text_input("Assessment Name", placeholder="e.g. Q1 Floor Survey 2025")
+            tname = st.selectbox("Tenant", tenants_for_form if tenants_for_form else ["(no tenants)"])
+            sb1, sb2 = st.columns(2)
+            ok  = sb1.form_submit_button("✅ Create", type="primary", use_container_width=True)
+            sb2.form_submit_button("✖ Cancel", use_container_width=True)
+        if ok:
+            if not aname.strip():
+                st.error("Assessment Name is required.")
+            elif not tenants_for_form:
+                st.error("No tenants available.")
+            else:
+                new_id = create_assessment(aname.strip(), tname, current_user)
+                st.session_state._adlg_action     = None
+                st.session_state._open_assessment = new_id
+                st.rerun()
+
+    @st.dialog("✏️ Edit Assessment")
+    def dialog_edit_assessment(a):
+        tenants_for_form = get_tenant_names() if is_admin else tenant_access
+        cur_t = a["tenant_name"]
+        t_idx = tenants_for_form.index(cur_t) if cur_t in tenants_for_form else 0
+        with st.form("frm_edit_assessment"):
+            aname = st.text_input("Assessment Name", value=a["assessment_name"])
+            tname = st.selectbox("Tenant", tenants_for_form, index=t_idx)
+            sb1, sb2 = st.columns(2)
+            ok  = sb1.form_submit_button("✅ Save", type="primary", use_container_width=True)
+            sb2.form_submit_button("✖ Cancel", use_container_width=True)
+        if ok:
+            if not aname.strip():
+                st.error("Assessment Name is required.")
+            else:
+                update_assessment_header(a["id"], aname.strip(), tname)
+                st.session_state._adlg_action = None
+                st.session_state._adlg_target = None
+                st.rerun()
+
+    @st.dialog("🗑️ Delete Assessment")
+    def dialog_delete_assessment(a):
+        summary = get_assessment_summary(a["id"])
         st.warning(
-            f"Delete entry **#{row_id}** — _{row_data.get('Assessment Name') or row_data['Name of Area']}_?",
+            f"Delete **{a['assessment_name']}**?  "
+            f"This will also remove **{summary['count']} area records**.",
             icon="⚠️"
         )
         c1, c2 = st.columns(2)
-        if c1.button("🗑️ Yes, Delete", use_container_width=True, type="primary"):
-            delete_assessment_row_in_db(row_id)
+        if c1.button("🗑️ Yes, Delete", type="primary", use_container_width=True):
+            delete_assessment(a["id"])
             st.session_state._adlg_action = None
             st.session_state._adlg_target = None
-            st.session_state.pop("_assess_df", None)
             st.rerun()
         if c2.button("✖ Cancel", use_container_width=True):
             st.session_state._adlg_action = None
             st.session_state._adlg_target = None
             st.rerun()
 
-    # ── Dialog state init ─────────────────────────────────────────────
-    for k in ["_adlg_action", "_adlg_target"]:
-        if k not in st.session_state:
-            st.session_state[k] = None
-
     # ── Toolbar ───────────────────────────────────────────────────────
-    tb1, tb2, tb3, _ = st.columns([1.2, 1, 1, 3])
-    if tb1.button("➕ New Entry", type="primary", use_container_width=True):
-        st.session_state._adlg_action = "add"
+    tb1, tb2, _ = st.columns([1.4, 2, 4])
+    if tb1.button("➕ New Assessment", type="primary", use_container_width=True):
+        st.session_state._adlg_action = "new_assessment"
         st.session_state._adlg_target = None
 
-    # Filter
-    valid_tenants   = get_tenant_names()
-    safe_access     = [t for t in tenant_access if t in valid_tenants]
-    filter_tenants  = tb2.multiselect("Tenant Filter", valid_tenants,
-                                      default=safe_access, label_visibility="collapsed")
+    valid_tenants = get_tenant_names()
+    safe_access   = [t for t in tenant_access if t in valid_tenants]
+    filter_tenants = tb2.multiselect(
+        "Filter by Tenant", valid_tenants,
+        default=safe_access, label_visibility="collapsed"
+    )
 
-    # Load data fresh from DB
+    # ── Load assessments ──────────────────────────────────────────────
     if is_admin:
-        raw_df = load_assessment_from_db()           # all records
+        assessments = load_assessments()
     else:
-        raw_df = load_assessment_from_db(created_by=current_user)  # only own
+        assessments = load_assessments(created_by=current_user)
 
-    display_df = db_to_display_df(raw_df)
-
-    # Apply tenant filter
-    if filter_tenants and not display_df.empty:
-        display_df = display_df[display_df["Tenant Name"].isin(filter_tenants)]
-
-    # Export button
-    if not display_df.empty:
-        with tb3:
-            st.download_button(
-                "📥 Export PDF",
-                data=generate_pdf(display_df.drop(columns=["ID","Created By"], errors="ignore")),
-                file_name=f"Assessment_{datetime.now():%Y%m%d}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-            )
+    if filter_tenants:
+        assessments = [a for a in assessments if a["tenant_name"] in filter_tenants]
 
     st.markdown("---")
 
-    # ── Grid ─────────────────────────────────────────────────────────
-    st.subheader("📊 Assessment Records")
-
-    if display_df.empty:
-        st.info("No assessment records found. Click **➕ New Entry** to add one.")
+    if not assessments:
+        st.info("No assessments yet — click **➕ New Assessment** to create one.")
     else:
-        # Summary metrics
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total Records", len(display_df))
-        m2.metric("Total SQFT",    f"{display_df['Coverage (SQFT)'].sum():,.1f}")
-        m3.metric("Tenants",       display_df["Tenant Name"].nunique())
+        # Summary bar
+        total_areas = 0
+        total_sqft  = 0.0
+        for a in assessments:
+            s = get_assessment_summary(a["id"])
+            total_areas += s["count"]
+            total_sqft  += s["total_sqft"]
+
+        sm1, sm2, sm3 = st.columns(3)
+        sm1.metric("Assessments", len(assessments))
+        sm2.metric("Total Areas", total_areas)
+        sm3.metric("Total SQFT",  f"{total_sqft:,.1f}")
         st.markdown("")
 
-        # Column headers
+        # Grid header
         if is_admin:
-            hcols = st.columns([0.6, 2.5, 2, 2, 2, 1.5, 1.2, 1.5])
-            for col, label in zip(hcols, ["ID","Assessment Name","Tenant","Area","Category","SQFT","Created By","Actions"]):
-                col.markdown(f"**{label}**")
+            hcols = st.columns([0.5, 3, 2.5, 1.5, 0.8, 1.8, 1.8])
+            for col, lbl in zip(hcols, ["ID", "Assessment Name", "Tenant", "Date", "Areas", "Created By", "Actions"]):
+                col.markdown(f"**{lbl}**")
         else:
-            hcols = st.columns([0.6, 2.5, 2, 2, 2, 1.5, 1.5])
-            for col, label in zip(hcols, ["ID","Assessment Name","Tenant","Area","Category","SQFT","Actions"]):
-                col.markdown(f"**{label}**")
-        st.markdown("<hr style='margin:4px 0 8px 0;'>", unsafe_allow_html=True)
+            hcols = st.columns([0.5, 3, 2.5, 1.5, 0.8, 1.8])
+            for col, lbl in zip(hcols, ["ID", "Assessment Name", "Tenant", "Date", "Areas", "Actions"]):
+                col.markdown(f"**{lbl}**")
+        st.markdown("<hr style='margin:4px 0 6px;'>", unsafe_allow_html=True)
 
-        for _, row in display_df.iterrows():
-            rid = int(row["ID"])
-            aname = row.get("Assessment Name","") or "—"
+        for a in assessments:
+            summary = get_assessment_summary(a["id"])
+            if is_admin:
+                rc = st.columns([0.5, 3, 2.5, 1.5, 0.8, 1.8, 1.8])
+            else:
+                rc = st.columns([0.5, 3, 2.5, 1.5, 0.8, 1.8])
+
+            rc[0].markdown(f"`{a['id']}`")
+
+            # Clickable assessment name → opens detail
+            if rc[1].button(a["assessment_name"], key=f"open_{a['id']}",
+                            use_container_width=True):
+                st.session_state._open_assessment = a["id"]
+                st.session_state._adlg_action     = None
+                st.rerun()
+
+            rc[2].markdown(a["tenant_name"])
+            rc[3].markdown(a["date_added"])
+            rc[4].markdown(str(summary["count"]))
 
             if is_admin:
-                rc = st.columns([0.6, 2.5, 2, 2, 2, 1.5, 1.2, 1.5])
-                rc[0].markdown(f"`{rid}`")
-                rc[1].markdown(aname)
-                rc[2].markdown(row["Tenant Name"])
-                rc[3].markdown(row["Name of Area"])
-                rc[4].markdown(row["Category"])
-                rc[5].markdown(f"{row['Coverage (SQFT)']:,.1f}")
-                creator = str(row.get("Created By","")).split("@")[0]
-                rc[6].markdown(f"<span style='color:#7ec8e3;font-size:.8rem;'>{creator}</span>",
-                               unsafe_allow_html=True)
-                act_col = rc[7]
-            else:
-                rc = st.columns([0.6, 2.5, 2, 2, 2, 1.5, 1.5])
-                rc[0].markdown(f"`{rid}`")
-                rc[1].markdown(aname)
-                rc[2].markdown(row["Tenant Name"])
-                rc[3].markdown(row["Name of Area"])
-                rc[4].markdown(row["Category"])
-                rc[5].markdown(f"{row['Coverage (SQFT)']:,.1f}")
+                creator = str(a.get("created_by","")).split("@")[0]
+                rc[5].markdown(
+                    f"<span style='color:#7ec8e3;font-size:.8rem;'>{creator}</span>",
+                    unsafe_allow_html=True
+                )
                 act_col = rc[6]
+            else:
+                act_col = rc[5]
 
             ab1, ab2 = act_col.columns(2)
-            if ab1.button("✏️", key=f"aedit_{rid}", help="Edit"):
-                st.session_state._adlg_action = "edit"
-                st.session_state._adlg_target = rid
-            if ab2.button("🗑️", key=f"adel_{rid}", help="Delete"):
-                st.session_state._adlg_action = "delete"
-                st.session_state._adlg_target = rid
+            if ab1.button("✏️", key=f"aedit_{a['id']}", help="Edit Assessment"):
+                st.session_state._adlg_action = "edit_assessment"
+                st.session_state._adlg_target = a["id"]
+            if ab2.button("🗑️", key=f"adel_{a['id']}", help="Delete Assessment"):
+                st.session_state._adlg_action = "delete_assessment"
+                st.session_state._adlg_target = a["id"]
 
     # ── Open dialogs ──────────────────────────────────────────────────
-    aaction = st.session_state._adlg_action
-    atarget = st.session_state._adlg_target
+    aact = st.session_state._adlg_action
+    atgt = st.session_state._adlg_target
 
-    if aaction == "add":
-        dialog_add_entry()
-    elif aaction in ("edit","delete") and atarget is not None:
-        # Find the row data
-        row_match = display_df[display_df["ID"] == atarget] if not display_df.empty else pd.DataFrame()
-        if not row_match.empty:
-            rdata = row_match.iloc[0].to_dict()
-            if aaction == "edit":
-                dialog_edit_entry(atarget, rdata)
+    if aact == "new_assessment":
+        dialog_new_assessment()
+    elif aact in ("edit_assessment", "delete_assessment") and atgt:
+        match = next((a for a in assessments if a["id"] == atgt), None) if assessments else None
+        if match:
+            if aact == "edit_assessment":
+                dialog_edit_assessment(match)
             else:
-                dialog_delete_entry(atarget, rdata)
+                dialog_delete_assessment(match)
 
 
 def render_topbar(display_name, role):
