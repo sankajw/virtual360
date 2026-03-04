@@ -57,11 +57,30 @@ LOGO_ICON_HTML = f'<img src="data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4
 # ─────────────────────────────────────────────
 # DB PATH — persistent storage
 # ─────────────────────────────────────────────
-# Store in home directory (~/.virtual360/) which persists across
-# Streamlit Cloud restarts (unlike /tmp which resets on every restart)
-_DATA_DIR = os.path.join(os.path.expanduser("~"), ".virtual360")
-os.makedirs(_DATA_DIR, exist_ok=True)
-DB_PATH = os.path.join(_DATA_DIR, "virtual360_data.db")
+# Priority order for DB location:
+#   1. st.secrets["db_path"]        — explicit override (e.g. mounted volume on Cloud)
+#   2. $VIRTUAL360_DB_PATH env var  — environment variable override
+#   3. ~/.virtual360/               — default home directory (persists on most hosts)
+def _resolve_db_path() -> str:
+    try:
+        p = st.secrets.get("db_path", "")
+        if p:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            return p
+    except Exception:
+        pass
+    env_p = os.environ.get("VIRTUAL360_DB_PATH", "")
+    if env_p:
+        os.makedirs(os.path.dirname(env_p), exist_ok=True)
+        return env_p
+    data_dir = os.path.join(os.path.expanduser("~"), ".virtual360")
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, "virtual360_data.db")
+
+DB_PATH = _resolve_db_path()
+# ── To use a persistent volume on Streamlit Cloud, add to secrets.toml: ──
+# db_path = "/mount/src/virtual360/data/virtual360_data.db"
+# ─────────────────────────────────────────────────────────────────────────
 
 # ─────────────────────────────────────────────
 # HELPERS
@@ -71,9 +90,12 @@ def hash_pw(password: str) -> str:
 
 
 def get_db():
-    """Return a SQLite connection to the writable /tmp database."""
-    conn = sqlite3.connect(DB_PATH)
+    """Return a SQLite connection with WAL mode for crash safety and concurrency."""
+    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")   # write-ahead log — survives crashes
+    conn.execute("PRAGMA synchronous=NORMAL") # safe + fast
+    conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
 
@@ -482,7 +504,7 @@ def _get_seed_users() -> dict:
 
 
 def load_users_from_db() -> dict:
-    """Load all users from the /tmp SQLite database into a plain dict."""
+    """Load all users from the SQLite database into a plain dict."""
     with get_db() as conn:
         rows = conn.execute("SELECT * FROM users").fetchall()
         cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
@@ -509,6 +531,17 @@ def save_user_to_db(username: str, ud: dict):
         conn.commit()
 
 
+def _backup_db():
+    """Copy DB to .bak file on startup so data is never fully lost."""
+    import shutil
+    bak = DB_PATH + ".bak"
+    if os.path.exists(DB_PATH):
+        try:
+            shutil.copy2(DB_PATH, bak)
+        except Exception:
+            pass
+
+
 def delete_user_from_db(username: str):
     """Delete a user from the database."""
     with get_db() as conn:
@@ -527,7 +560,8 @@ def save_users_to_secrets(users: dict):
     st.session_state.users = load_users_from_db()
 
 
-# Initialise DB on every cold start
+# Backup then initialise DB on every cold start
+_backup_db()
 init_db()
 
 
@@ -1216,10 +1250,7 @@ def show_login():
 # ─────────────────────────────────────────────
 def show_admin_panel():
     st.markdown("## ⚙️ Admin Panel")
-    st.caption(
-        "User changes are saved to a SQLite database in `/tmp`. "
-        "Seed credentials are loaded from `st.secrets` on first run."
-    )
+    st.caption(f"Database: `{DB_PATH}`")
     st.markdown("---")
 
     tab_users, tab_tenants, tab_data, tab_export = st.tabs([
