@@ -804,150 +804,177 @@ def show_admin_panel():
     # ── TAB 2 : Tenant Management ─────────────────────────────────────
     with tab_tenants:
 
-        # ── Section A: Tenant Types ───────────────────────────────────
-        st.subheader("🗂️ Tenant Types")
-        cur_types = load_tenant_types_from_db()
-        if cur_types:
-            st.dataframe(
-                pd.DataFrame({"Tenant Type": cur_types}),
-                use_container_width=True, hide_index=True,
-            )
-        else:
-            st.info("No tenant types defined yet.")
-
-        tt_add_col, tt_del_col = st.columns(2)
-
-        with tt_add_col:
-            with st.form("add_type_form", clear_on_submit=True):
-                new_type_name = st.text_input("New Tenant Type", placeholder="e.g. Co-Working")
-                add_type_btn  = st.form_submit_button("➕ Add Type", use_container_width=True)
-            if add_type_btn:
-                nt = new_type_name.strip()
-                if not nt:
-                    st.error("Type name cannot be empty.")
-                elif nt in cur_types:
-                    st.error("Type already exists.")
-                else:
-                    add_tenant_type_to_db(nt)
-                    st.session_state.tenant_types = load_tenant_types_from_db()
-                    st.success(f"Tenant type **{nt}** added.")
-                    st.rerun()
-
-        with tt_del_col:
-            with st.form("del_type_form", clear_on_submit=True):
-                del_type = st.selectbox(
-                    "Delete Tenant Type",
-                    cur_types if cur_types else ["(none)"],
-                    key="del_type_sel",
-                )
-                del_type_btn = st.form_submit_button("🗑️ Delete Type", type="primary",
-                                                      use_container_width=True)
-            if del_type_btn and del_type != "(none)":
-                delete_tenant_type_from_db(del_type)
-                st.session_state.tenant_types = load_tenant_types_from_db()
-                st.success(f"Tenant type **{del_type}** deleted.")
-                st.rerun()
-
-        st.markdown("---")
-
-        # ── Section B: Tenants ────────────────────────────────────────
-        st.subheader("🏢 Tenants")
-        tenants = st.session_state.tenants
-        if tenants:
-            st.dataframe(
-                pd.DataFrame([{"Tenant Name": t["name"], "Tenant Type": t["type"]} for t in tenants]),
-                use_container_width=True, hide_index=True,
-            )
-        else:
-            st.info("No tenants added yet.")
-
-        st.markdown("---")
-        tcol_add, tcol_edit, tcol_del = st.columns(3)
-
-        # ── Add ──────────────────────────────────────────────────────
-        with tcol_add:
-            st.subheader("➕ Add Tenant")
+        # ── Dialog: Add Tenant ────────────────────────────────────────
+        @st.dialog("➕ Add New Tenant")
+        def dialog_add_tenant():
             live_types = load_tenant_types_from_db()
-            with st.form("add_tenant_form", clear_on_submit=True):
-                new_tenant_name = st.text_input("Tenant Name", placeholder="e.g. Marina Bay Tower")
-                new_tenant_type = st.selectbox(
-                    "Tenant Type",
-                    live_types if live_types else ["(no types defined)"]
-                )
-                add_tenant_btn = st.form_submit_button("Add Tenant", use_container_width=True)
-
-            if add_tenant_btn:
-                hn = new_tenant_name.strip()
-                if not hn:
+            with st.form("dlg_add_tenant", clear_on_submit=True):
+                tn = st.text_input("Tenant Name", placeholder="e.g. Marina Bay Tower")
+                tt = st.selectbox("Tenant Type",
+                                  live_types if live_types else ["(no types defined)"])
+                c1, c2 = st.columns(2)
+                add = c1.form_submit_button("✅ Add", use_container_width=True, type="primary")
+                c2.form_submit_button("✖ Cancel", use_container_width=True)
+            if add:
+                name = tn.strip()
+                if not name:
                     st.error("Tenant name cannot be empty.")
-                elif hn in get_tenant_names():
+                elif name in get_tenant_names():
                     st.error("Tenant already exists.")
                 elif not live_types:
-                    st.error("Please add at least one Tenant Type first.")
+                    st.error("Add at least one Tenant Type first.")
                 else:
-                    add_tenant_to_db(hn, new_tenant_type)
+                    add_tenant_to_db(name, tt)
                     st.session_state.tenants = load_tenants_from_db()
-                    st.success(f"**{hn}** added.")
+                    st.session_state._tdlg_action = None
                     st.rerun()
 
-        # ── Edit (type only) ─────────────────────────────────────────
-        with tcol_edit:
-            st.subheader("✏️ Edit Tenant Type")
-            tenant_name_list = get_tenant_names()
-            live_types_edit  = load_tenant_types_from_db()
-            # Build a lookup: name → current type
-            tenant_type_map  = {t["name"]: t["type"] for t in load_tenants_from_db()}
-            with st.form("edit_tenant_form", clear_on_submit=False):
-                edit_tenant = st.selectbox(
-                    "Select Tenant",
-                    tenant_name_list if tenant_name_list else ["(none)"],
-                    key="edit_tenant_sel",
-                )
-                # Pre-select current type
-                cur_type = tenant_type_map.get(edit_tenant, "")
-                safe_idx = live_types_edit.index(cur_type) if cur_type in live_types_edit else 0
-                new_type = st.selectbox(
-                    "New Tenant Type",
-                    live_types_edit if live_types_edit else ["(no types defined)"],
-                    index=safe_idx,
-                    key="edit_tenant_type_sel",
-                )
-                edit_btn = st.form_submit_button("Update Type", use_container_width=True)
+        # ── Dialog: Edit Tenant ───────────────────────────────────────
+        @st.dialog("✏️ Edit Tenant")
+        def dialog_edit_tenant(tenant_name):
+            live_types = load_tenant_types_from_db()
+            cur_map    = {t["name"]: t["type"] for t in load_tenants_from_db()}
+            cur_type   = cur_map.get(tenant_name, "")
+            safe_idx   = live_types.index(cur_type) if cur_type in live_types else 0
+            with st.form("dlg_edit_tenant", clear_on_submit=False):
+                st.markdown(f"**Tenant:** `{tenant_name}`")
+                new_type = st.selectbox("Tenant Type",
+                                        live_types if live_types else ["(no types)"],
+                                        index=safe_idx)
+                c1, c2 = st.columns(2)
+                save = c1.form_submit_button("✅ Save", use_container_width=True, type="primary")
+                c2.form_submit_button("✖ Cancel", use_container_width=True)
+            if save:
+                update_tenant_type_in_db(tenant_name, new_type)
+                st.session_state.tenants = load_tenants_from_db()
+                st.session_state._tdlg_action = None
+                st.session_state._tdlg_target = None
+                st.rerun()
 
-            if edit_btn and edit_tenant != "(none)":
-                if not live_types_edit:
-                    st.error("No tenant types available.")
-                else:
-                    update_tenant_type_in_db(edit_tenant, new_type)
-                    st.session_state.tenants = load_tenants_from_db()
-                    st.success(f"**{edit_tenant}** updated to *{new_type}*.")
-                    st.rerun()
-
-        # ── Delete ───────────────────────────────────────────────────
-        with tcol_del:
-            st.subheader("🗑️ Delete Tenant")
-            st.warning("Assessment data will NOT be removed.", icon="⚠️")
-            with st.form("del_tenant_form", clear_on_submit=True):
-                del_tenant = st.selectbox(
-                    "Select Tenant",
-                    tenant_name_list if tenant_name_list else ["(none)"],
-                    key="del_tenant_sel",
-                )
-                del_tenant_btn = st.form_submit_button("Delete Tenant", type="primary",
-                                                       use_container_width=True)
-
-            if del_tenant_btn and del_tenant != "(none)":
-                delete_tenant_from_db(del_tenant)
+        # ── Dialog: Delete Tenant ─────────────────────────────────────
+        @st.dialog("🗑️ Delete Tenant")
+        def dialog_delete_tenant(tenant_name):
+            st.warning(f"Delete **{tenant_name}**? This cannot be undone.", icon="⚠️")
+            st.caption("Users assigned to this tenant will have it removed from their access.")
+            c1, c2 = st.columns(2)
+            if c1.button("🗑️ Yes, Delete", use_container_width=True, type="primary"):
+                delete_tenant_from_db(tenant_name)
                 for uname, ud in st.session_state.users.items():
-                    if del_tenant in ud["tenant_access"]:
-                        ud["tenant_access"] = [t for t in ud["tenant_access"] if t != del_tenant]
+                    if tenant_name in ud["tenant_access"]:
+                        ud["tenant_access"] = [t for t in ud["tenant_access"] if t != tenant_name]
                         save_user_to_db(uname, ud)
                 st.session_state.tenants = load_tenants_from_db()
                 st.session_state.users   = load_users_from_db()
-                st.success(f"Tenant **{del_tenant}** deleted.")
+                st.session_state._tdlg_action = None
+                st.session_state._tdlg_target = None
+                st.rerun()
+            if c2.button("✖ Cancel", use_container_width=True):
+                st.session_state._tdlg_action = None
+                st.session_state._tdlg_target = None
                 st.rerun()
 
-    # ── TAB 3 : All Tenant Data ───────────────────────────────────────
+        # ── Dialog: Manage Tenant Types ───────────────────────────────
+        @st.dialog("🗂️ Manage Tenant Types")
+        def dialog_manage_types():
+            cur_types = load_tenant_types_from_db()
+            st.markdown("**Current Types**")
+            if cur_types:
+                st.dataframe(pd.DataFrame({"Tenant Type": cur_types}),
+                             use_container_width=True, hide_index=True)
+            else:
+                st.info("No types defined.")
+            st.markdown("---")
+            with st.form("dlg_add_type", clear_on_submit=True):
+                new_t = st.text_input("Add New Type", placeholder="e.g. Co-Working")
+                ca, cb = st.columns(2)
+                add_t = ca.form_submit_button("➕ Add", use_container_width=True, type="primary")
+                ca2 = cb.form_submit_button("Close", use_container_width=True)
+            if add_t:
+                nt = new_t.strip()
+                if not nt:
+                    st.error("Name cannot be empty.")
+                elif nt in cur_types:
+                    st.error("Already exists.")
+                else:
+                    add_tenant_type_to_db(nt)
+                    st.session_state.tenant_types = load_tenant_types_from_db()
+                    st.rerun()
+            if ca2:
+                st.session_state._tdlg_action = None
+                st.rerun()
+            st.markdown("---")
+            st.markdown("**Delete a Type**")
+            if cur_types:
+                with st.form("dlg_del_type", clear_on_submit=True):
+                    del_t = st.selectbox("Select Type to Delete", cur_types)
+                    cd1, cd2 = st.columns(2)
+                    del_btn = cd1.form_submit_button("🗑️ Delete", type="primary", use_container_width=True)
+                    cd2.form_submit_button("Cancel", use_container_width=True)
+                if del_btn:
+                    delete_tenant_type_from_db(del_t)
+                    st.session_state.tenant_types = load_tenant_types_from_db()
+                    st.rerun()
+
+        # ── Dialog state init ─────────────────────────────────────────
+        for k in ["_tdlg_action", "_tdlg_target"]:
+            if k not in st.session_state:
+                st.session_state[k] = None
+
+        # ── Toolbar ───────────────────────────────────────────────────
+        tb1, tb2, _ = st.columns([1, 1, 4])
+        if tb1.button("➕ Add Tenant", type="primary", use_container_width=True):
+            st.session_state._tdlg_action = "add"
+            st.session_state._tdlg_target = None
+        if tb2.button("🗂️ Tenant Types", use_container_width=True):
+            st.session_state._tdlg_action = "types"
+            st.session_state._tdlg_target = None
+
+        st.markdown("---")
+
+        # ── Tenant Grid ───────────────────────────────────────────────
+        tenants = load_tenants_from_db()
+        if not tenants:
+            st.info("No tenants added yet.")
+        else:
+            hc = st.columns([3, 2, 1.5])
+            for col, label in zip(hc, ["Tenant Name", "Tenant Type", "Actions"]):
+                col.markdown(f"**{label}**")
+            st.markdown("<hr style='margin:4px 0 8px 0;'>", unsafe_allow_html=True)
+
+            for t in tenants:
+                rc = st.columns([3, 2, 1.5])
+                rc[0].markdown(t["name"])
+                type_color = {"Commercial":"#1565C0","Residential":"#2E7D32",
+                              "Retail":"#E65100","Industrial":"#4A148C",
+                              "Hospitality":"#00695C","Mixed-Use":"#558B2F"
+                             }.get(t["type"], "#546E7A")
+                rc[1].markdown(
+                    f"<span style='background:{type_color};color:#fff;padding:2px 10px;"
+                    f"border-radius:12px;font-size:.8rem;'>{t['type']}</span>",
+                    unsafe_allow_html=True,
+                )
+                ab1, ab2 = rc[2].columns(2)
+                if ab1.button("✏️", key=f"tedit_{t['name']}", help="Edit tenant"):
+                    st.session_state._tdlg_action = "edit"
+                    st.session_state._tdlg_target = t["name"]
+                if ab2.button("🗑️", key=f"tdel_{t['name']}", help="Delete tenant"):
+                    st.session_state._tdlg_action = "delete"
+                    st.session_state._tdlg_target = t["name"]
+
+        # ── Open correct dialog ───────────────────────────────────────
+        taction = st.session_state._tdlg_action
+        ttarget = st.session_state._tdlg_target
+        if taction == "add":
+            dialog_add_tenant()
+        elif taction == "edit" and ttarget:
+            dialog_edit_tenant(ttarget)
+        elif taction == "delete" and ttarget:
+            dialog_delete_tenant(ttarget)
+        elif taction == "types":
+            dialog_manage_types()
+
+
+        # ── TAB 3 : All Tenant Data ───────────────────────────────────────
     with tab_data:
         st.subheader("All Assessment Records")
         if st.session_state.tenant_data.empty:
