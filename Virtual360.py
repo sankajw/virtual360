@@ -542,31 +542,84 @@ init_state()
 # ─────────────────────────────────────────────
 # PDF GENERATOR
 # ─────────────────────────────────────────────
-def generate_pdf(df: pd.DataFrame) -> bytes:
-    buf  = io.BytesIO()
-    doc  = SimpleDocTemplate(buf, pagesize=letter)
-    styl = getSampleStyleSheet()
-    rows  = [list(df.columns)] + df.values.tolist()
-    table = Table(rows)
-    table.setStyle(TableStyle([
-        ("BACKGROUND",    (0, 0), (-1, 0), colors.HexColor("#2E3B4E")),
-        ("TEXTCOLOR",     (0, 0), (-1, 0), colors.whitesmoke),
-        ("GRID",          (0, 0), (-1, -1), 0.5, colors.grey),
-        ("FONTSIZE",      (0, 0), (-1, -1), 10),
-        ("BOTTOMPADDING", (0, 0), (-1,  0), 10),
-    ]))
-    doc.build([
-        Paragraph("Dexxora Pvt Ltd",                               styl["Title"]),
-        Paragraph("Virtual360 Area Assessment Report",              styl["Heading2"]),
-        Paragraph(f"Generated on: {datetime.now():%Y-%m-%d %H:%M}", styl["Normal"]),
-        Spacer(1, 20),
-        table,
-        Paragraph(
-            f"<br/><br/>© {datetime.now().year} Dexxora Pvt Ltd. All rights reserved.",
-            styl["Normal"]
-        ),
-    ])
-    return buf.getvalue()
+def generate_pdf(df: pd.DataFrame, title: str = "Virtual360 Area Assessment Report") -> bytes:
+    from reportlab.lib.units import inch
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.platypus import Image as RLImage
+    import base64 as _b64, tempfile as _tmp
+
+    try:
+        buf      = io.BytesIO()
+        pagesize = landscape(A4) if len(df.columns) > 5 else A4
+        doc      = SimpleDocTemplate(
+            buf, pagesize=pagesize,
+            leftMargin=0.6*inch, rightMargin=0.6*inch,
+            topMargin=0.7*inch,  bottomMargin=0.6*inch,
+        )
+        styl = getSampleStyleSheet()
+
+        def clean(v):
+            if v is None:
+                return ""
+            if isinstance(v, float):
+                return "" if v != v else f"{v:,.2f}"
+            return str(v)
+
+        header    = list(df.columns)
+        data_rows = [[clean(v) for v in row] for row in df.values.tolist()]
+        rows      = [header] + data_rows
+
+        page_w = pagesize[0] - 1.2*inch
+        n_cols = len(header)
+        col_w  = page_w / n_cols
+
+        table = Table(rows, colWidths=[col_w]*n_cols, repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1,  0), colors.HexColor("#1a2535")),
+            ("TEXTCOLOR",     (0, 0), (-1,  0), colors.white),
+            ("FONTNAME",      (0, 0), (-1,  0), "Helvetica-Bold"),
+            ("FONTSIZE",      (0, 0), (-1,  0), 9),
+            ("BOTTOMPADDING", (0, 0), (-1,  0), 8),
+            ("TOPPADDING",    (0, 0), (-1,  0), 8),
+            ("FONTSIZE",      (0, 1), (-1, -1), 8),
+            ("TOPPADDING",    (0, 1), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 1), (-1, -1), 5),
+            ("GRID",          (0, 0), (-1, -1), 0.4, colors.HexColor("#d0d8e4")),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f7fb")]),
+        ]))
+
+        elements = []
+
+        # Logo image
+        try:
+            logo_bytes = _b64.b64decode(LOGO_FULL_B64)
+            with _tmp.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                tmp.write(logo_bytes)
+                tmp_path = tmp.name
+            elements.append(RLImage(tmp_path, width=2.2*inch, height=0.55*inch))
+            elements.append(Spacer(1, 6))
+        except Exception:
+            elements.append(Paragraph("Dexxora Pvt Ltd", styl["Title"]))
+
+        elements += [
+            Paragraph(title, styl["Heading2"]),
+            Paragraph(f"Generated: {datetime.now():%Y-%m-%d %H:%M}", styl["Normal"]),
+            Spacer(1, 14),
+            table,
+            Spacer(1, 12),
+            Paragraph(f"© {datetime.now().year} Dexxora Pvt Ltd. All rights reserved.", styl["Normal"]),
+        ]
+
+        doc.build(elements)
+        return buf.getvalue()
+
+    except Exception as e:
+        buf  = io.BytesIO()
+        doc  = SimpleDocTemplate(buf)
+        doc.build([Paragraph(f"PDF error: {e}", getSampleStyleSheet()["Normal"])])
+        return buf.getvalue()
+
 
 # ─────────────────────────────────────────────
 # LOGIN PAGE
@@ -1154,9 +1207,10 @@ def show_admin_panel():
             edf = disp[disp["Tenant Name"].isin(eh)]
             if not edf.empty:
                 pdf_cols = ["Assessment Name","Tenant Name","Date Added","Name of Area","Category","Coverage (SQFT)"]
+                export_df = edf[[c for c in pdf_cols if c in edf.columns]]
                 st.download_button(
                     label="📥 Download PDF Report",
-                    data=generate_pdf(edf[[c for c in pdf_cols if c in edf.columns]]),
+                    data=generate_pdf(export_df, title="All Tenant Assessment Report"),
                     file_name=f"Dexxora_Assessment_{datetime.now():%Y%m%d}.pdf",
                     mime="application/pdf",
                 )
@@ -1277,23 +1331,32 @@ def show_assessment():
                 st.session_state._adlg_target = None
                 st.rerun()
 
-        # ── Add area button ───────────────────────────────────────────
+        # ── Add area / Export buttons ─────────────────────────────────
         ab1, ab2, _ = st.columns([1.2, 1.2, 4])
         if ab1.button("➕ Add Area", type="primary", use_container_width=True):
             st.session_state._adlg_action = "add_area"
             st.session_state._adlg_target = None
 
-        # Export areas as PDF
-        if areas and ab2.button("📥 Export PDF", use_container_width=True):
+        if areas:
             pdf_df = pd.DataFrame(areas).rename(columns={
                 "area_name": "Area Name", "category": "Category", "sqft": "Coverage (SQFT)"
-            })[["Area Name","Category","Coverage (SQFT)"]]
-            st.download_button(
-                "⬇ Download",
-                data=generate_pdf(pdf_df),
-                file_name=f"{hdr['assessment_name'].replace(' ','_')}_{datetime.now():%Y%m%d}.pdf",
-                mime="application/pdf",
-            )
+            })[["Area Name", "Category", "Coverage (SQFT)"]]
+            try:
+                pdf_bytes = generate_pdf(
+                    pdf_df,
+                    title=f"{hdr['assessment_name']} — {hdr['tenant_name']}"
+                )
+            except Exception as _ex:
+                pdf_bytes = None
+                st.error(f"PDF error: {_ex}")
+            if pdf_bytes:
+                ab2.download_button(
+                    label="📥 Export PDF",
+                    data=pdf_bytes,
+                    file_name=f"{hdr['assessment_name'].replace(' ','_')}_{datetime.now():%Y%m%d}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
 
         st.markdown("")
 
@@ -1426,26 +1489,16 @@ def show_assessment():
             st.rerun()
 
     # ── Toolbar ───────────────────────────────────────────────────────
-    tb1, tb2, _ = st.columns([1.4, 2, 4])
+    tb1, _ = st.columns([1.4, 6])
     if tb1.button("➕ New Assessment", type="primary", use_container_width=True):
         st.session_state._adlg_action = "new_assessment"
         st.session_state._adlg_target = None
-
-    valid_tenants = get_tenant_names()
-    safe_access   = [t for t in tenant_access if t in valid_tenants]
-    filter_tenants = tb2.multiselect(
-        "Filter by Tenant", valid_tenants,
-        default=safe_access, label_visibility="collapsed"
-    )
 
     # ── Load assessments ──────────────────────────────────────────────
     if is_admin:
         assessments = load_assessments()
     else:
         assessments = load_assessments(created_by=current_user)
-
-    if filter_tenants:
-        assessments = [a for a in assessments if a["tenant_name"] in filter_tenants]
 
     st.markdown("---")
 
