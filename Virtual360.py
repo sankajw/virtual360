@@ -86,10 +86,10 @@ def init_db():
         old_users = conn.execute(
             "SELECT username FROM users WHERE username NOT LIKE '%@dexxora360'"
         ).fetchall()
+        migrated = False
         for row in old_users:
             old_name = row["username"]
             new_name = old_name + "@dexxora360"
-            # Only rename if the new name doesn't already exist
             exists = conn.execute(
                 "SELECT 1 FROM users WHERE username = ?", (new_name,)
             ).fetchone()
@@ -98,7 +98,12 @@ def init_db():
                     "UPDATE users SET username = ? WHERE username = ?",
                     (new_name, old_name)
                 )
-        conn.commit()
+                migrated = True
+        if migrated:
+            conn.commit()
+            # Clear cached users so session state reloads after migration
+            if "users" in st.session_state:
+                del st.session_state["users"]
 
         # ── Seed tenant types ─────────────────────────────────────────
         ttcount = conn.execute("SELECT COUNT(*) FROM tenant_types").fetchone()[0]
@@ -179,18 +184,21 @@ def delete_tenant_type_from_db(type_name: str):
 
 def _get_seed_users() -> dict:
     """Read initial users from st.secrets, falling back to defaults."""
+    DOMAIN = "@dexxora360"
     try:
         raw = st.secrets.get("users", {})
         if raw:
-            return {
-                uname: {
+            result = {}
+            for uname, udata in raw.items():
+                # Ensure domain suffix on every username
+                key = uname if uname.endswith(DOMAIN) else uname + DOMAIN
+                result[key] = {
                     "password_hash": udata["password_hash"],
                     "role":          udata["role"],
-                    "tenant_access":  list(udata["tenant_access"]),
+                    "tenant_access": list(udata["tenant_access"]),
                     "display_name":  udata["display_name"],
                 }
-                for uname, udata in raw.items()
-            }
+            return result
     except Exception:
         pass
     # Hard-coded fallback
@@ -198,19 +206,19 @@ def _get_seed_users() -> dict:
         "admin@dexxora360": {
             "password_hash": hash_pw("Admin@123"),
             "role":          "admin",
-            "tenant_access":  ["EDEN Tenant", "Thaala Tenant"],
+            "tenant_access": ["EDEN Tenant", "Thaala Tenant"],
             "display_name":  "Administrator",
         },
         "eden_user@dexxora360": {
             "password_hash": hash_pw("Eden@123"),
             "role":          "user",
-            "tenant_access":  ["EDEN Tenant"],
+            "tenant_access": ["EDEN Tenant"],
             "display_name":  "EDEN Staff",
         },
         "thaala_user@dexxora360": {
             "password_hash": hash_pw("Thaala@123"),
             "role":          "user",
-            "tenant_access":  ["Thaala Tenant"],
+            "tenant_access": ["Thaala Tenant"],
             "display_name":  "Thaala Staff",
         },
     }
@@ -367,6 +375,8 @@ def show_login():
         password = st.text_input("Password", type="password", placeholder="Enter password")
 
         if st.button("🔐 Login", use_container_width=True, type="primary"):
+            # Always reload users fresh from DB on login attempt
+            st.session_state.users = load_users_from_db()
             users = st.session_state.users
             if username in users and users[username]["password_hash"] == hash_pw(password):
                 st.session_state.logged_in    = True
@@ -375,6 +385,11 @@ def show_login():
                 st.rerun()
             else:
                 st.error("Invalid username or password.")
+                # Show available usernames to help debug domain suffix issues
+                if username and username not in users:
+                    available = [u for u in users if u.split("@")[0] == username.split("@")[0]]
+                    if available:
+                        st.info(f"Did you mean: `{available[0]}`?")
 
         st.markdown("</div>", unsafe_allow_html=True)
         st.markdown(
@@ -382,6 +397,18 @@ def show_login():
             f"© {datetime.now().year} Dexxora Pvt Ltd. All rights reserved.</p>",
             unsafe_allow_html=True,
         )
+
+        with st.expander("🔧 Trouble logging in?"):
+            st.markdown("Default credentials: `admin` / `Admin@123`")
+            st.markdown("The domain `@dexxora360` is added automatically.")
+            if st.button("🔄 Reset database to defaults", type="secondary"):
+                import os
+                if os.path.exists(DB_PATH):
+                    os.remove(DB_PATH)
+                # Clear all session state
+                for k in list(st.session_state.keys()):
+                    del st.session_state[k]
+                st.rerun()
 
 # ─────────────────────────────────────────────
 # ADMIN PANEL
