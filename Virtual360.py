@@ -22,8 +22,14 @@ import streamlit.components.v1 as components
 # ─────────────────────────────────────────────
 st.set_page_config(page_title="Dexxora | Virtual360", layout="wide")
 
-# /tmp is always writable — on Streamlit Cloud AND locally
-DB_PATH = "/tmp/virtual360_users.db"
+# ─────────────────────────────────────────────
+# DB PATH — persistent storage
+# ─────────────────────────────────────────────
+# Store in home directory (~/.virtual360/) which persists across
+# Streamlit Cloud restarts (unlike /tmp which resets on every restart)
+_DATA_DIR = os.path.join(os.path.expanduser("~"), ".virtual360")
+os.makedirs(_DATA_DIR, exist_ok=True)
+DB_PATH = os.path.join(_DATA_DIR, "virtual360_data.db")
 
 # ─────────────────────────────────────────────
 # HELPERS
@@ -64,6 +70,16 @@ def init_db():
         conn.execute("""
             CREATE TABLE IF NOT EXISTS tenant_types (
                 type_name TEXT PRIMARY KEY
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS assessment_data (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                date_added   TEXT NOT NULL,
+                tenant_name  TEXT NOT NULL,
+                area_name    TEXT NOT NULL,
+                category     TEXT NOT NULL,
+                sqft         REAL NOT NULL
             )
         """)
         conn.commit()
@@ -196,6 +212,68 @@ def delete_tenant_type_from_db(type_name: str):
         conn.commit()
 
 
+# ── Assessment Data ───────────────────────────────────────────────
+
+def load_assessment_from_db() -> pd.DataFrame:
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT date_added, tenant_name, area_name, category, sqft FROM assessment_data ORDER BY id"
+        ).fetchall()
+    if rows:
+        return pd.DataFrame([dict(r) for r in rows],
+            columns=["date_added","tenant_name","area_name","category","sqft"])
+    return pd.DataFrame(columns=["date_added","tenant_name","area_name","category","sqft"])
+
+
+def save_assessment_row_to_db(date_added, tenant_name, area_name, category, sqft):
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO assessment_data (date_added, tenant_name, area_name, category, sqft) VALUES (?,?,?,?,?)",
+            (date_added, tenant_name, area_name, category, sqft)
+        )
+        conn.commit()
+
+
+def delete_assessment_rows_for_tenants(tenant_names: list):
+    placeholders = ",".join("?" * len(tenant_names))
+    with get_db() as conn:
+        conn.execute(f"DELETE FROM assessment_data WHERE tenant_name IN ({placeholders})", tenant_names)
+        conn.commit()
+
+
+def delete_all_assessment_data():
+    with get_db() as conn:
+        conn.execute("DELETE FROM assessment_data")
+        conn.commit()
+
+
+def save_full_assessment_to_db(df: pd.DataFrame):
+    """Overwrite all assessment data in DB from a DataFrame (used after inline edits)."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM assessment_data")
+        for _, row in df.iterrows():
+            conn.execute(
+                "INSERT INTO assessment_data (date_added, tenant_name, area_name, category, sqft) VALUES (?,?,?,?,?)",
+                (str(row.get("Date Added", "")), str(row.get("Tenant Name", "")),
+                 str(row.get("Name of Area", "")), str(row.get("Category", "")),
+                 float(row.get("Coverage (SQFT)", 0)))
+            )
+        conn.commit()
+
+
+def db_to_display_df(db_df: pd.DataFrame) -> pd.DataFrame:
+    """Convert DB column names to display column names."""
+    if db_df.empty:
+        return pd.DataFrame(columns=["Date Added","Tenant Name","Name of Area","Category","Coverage (SQFT)"])
+    return db_df.rename(columns={
+        "date_added":  "Date Added",
+        "tenant_name": "Tenant Name",
+        "area_name":   "Name of Area",
+        "category":    "Category",
+        "sqft":        "Coverage (SQFT)",
+    })
+
+
 def _get_seed_users() -> dict:
     """Read initial users from st.secrets, falling back to defaults."""
     DOMAIN = "@dexxora360"
@@ -312,9 +390,9 @@ def init_state():
         st.session_state.tenant_types = load_tenant_types_from_db()
 
     if "tenant_data" not in st.session_state:
-        st.session_state.tenant_data = pd.DataFrame(columns=[
-            "Date Added", "Tenant Name", "Name of Area", "Category", "Coverage (SQFT)"
-        ])
+        # Load persisted assessment data from DB
+        raw = load_assessment_from_db()
+        st.session_state.tenant_data = db_to_display_df(raw)
     if "last_category" not in st.session_state:
         st.session_state.last_category = "Suite/Room"
 
@@ -961,11 +1039,14 @@ def show_assessment():
 
     if submitted:
         if area_name and sqm > 0:
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            # Persist to DB immediately — survives restarts
+            save_assessment_row_to_db(date_str, tenant_choice, area_name, cat, sqm)
             new_row = pd.DataFrame({
-                "Date Added":     [datetime.now().strftime("%Y-%m-%d")],
+                "Date Added":      [date_str],
                 "Tenant Name":     [tenant_choice],
-                "Name of Area":   [area_name],
-                "Category":       [cat],
+                "Name of Area":    [area_name],
+                "Category":        [cat],
                 "Coverage (SQFT)": [sqm],
             })
             st.session_state.tenant_data = pd.concat(
@@ -1002,7 +1083,10 @@ def show_assessment():
             other = st.session_state.tenant_data[
                 ~st.session_state.tenant_data["Tenant Name"].isin(tenant_access)
             ]
-            st.session_state.tenant_data = pd.concat([other, edited], ignore_index=True)
+            merged = pd.concat([other, edited], ignore_index=True)
+            st.session_state.tenant_data = merged
+            # Persist all changes to DB
+            save_full_assessment_to_db(merged)
             st.rerun()
 
         exp_df = edited[edited["Tenant Name"].isin(tenant_filter)]
@@ -1018,6 +1102,8 @@ def show_assessment():
                     use_container_width=True,
                 )
             if clear_btn:
+                # Delete from DB
+                delete_assessment_rows_for_tenants(list(tenant_access))
                 other = st.session_state.tenant_data[
                     ~st.session_state.tenant_data["Tenant Name"].isin(tenant_access)
                 ]
