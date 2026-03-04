@@ -685,6 +685,368 @@ def send_reset_email(to_email: str, username: str, temp_password: str) -> bool:
 ADMIN_RESET_EMAIL = "sankka@dexxora.com"
 
 
+# ═════════════════════════════════════════════════════════════════════
+# MODULE-LEVEL DIALOGS  (must be at module scope — Streamlit restriction)
+# ═════════════════════════════════════════════════════════════════════
+
+_DOMAIN = "@dexxora360"
+_CATS   = ["Suite/Room", "Restaurant & Bar", "Lobby",
+           "Function Venue", "Outdoor", "Gym", "Other"]
+
+# ── User dialogs ──────────────────────────────────────────────────────
+
+@st.dialog("➕ Add New User", width="large")
+def dlg_add_user():
+    with st.form("dlg_add_user_form", clear_on_submit=True):
+        nu_col, nu_suf = st.columns([3, 2])
+        nu_prefix = nu_col.text_input("Username")
+        nu_suf.markdown(
+            f"<div style='margin-top:28px;background:#e8edf3;border:1px solid #c8d3de;"
+            f"border-radius:6px;padding:8px 10px;color:#2E3B4E;font-weight:600;"
+            f"font-size:0.9rem;text-align:center;'>{_DOMAIN}</div>",
+            unsafe_allow_html=True,
+        )
+        nd  = st.text_input("Display Name")
+        nr  = st.selectbox("Role", ["user", "admin"])
+        nh  = st.multiselect("Tenant Access", get_tenant_names(), default=get_tenant_names()[:1])
+        np1 = st.text_input("Password",         type="password")
+        np2 = st.text_input("Confirm Password", type="password")
+        c1, c2 = st.columns(2)
+        add = c1.form_submit_button("✅ Add User", use_container_width=True, type="primary")
+        c2.form_submit_button("✖ Cancel", use_container_width=True)
+    if add:
+        nu = (nu_prefix.strip() + _DOMAIN) if nu_prefix.strip() else ""
+        if not nu_prefix.strip() or not np1:
+            st.error("Username and password are required.")
+        elif nu in st.session_state.users:
+            st.error(f"Username **{nu}** already exists.")
+        elif np1 != np2:
+            st.error("Passwords do not match.")
+        elif not nh:
+            st.error("Select at least one tenant.")
+        else:
+            st.session_state.users[nu] = {
+                "password_hash": hash_pw(np1),
+                "role":          nr,
+                "tenant_access": nh,
+                "display_name":  nd or nu_prefix.strip(),
+            }
+            save_users_to_secrets(st.session_state.users)
+            st.session_state.users       = load_users_from_db()
+            st.session_state._dlg_action = None
+            st.session_state._dlg_target = None
+            st.rerun()
+
+
+@st.dialog("✏️ Edit User", width="large")
+def dlg_edit_user(username):
+    ud            = st.session_state.users.get(username, {})
+    valid_tenants = get_tenant_names()
+    safe_acc      = [a for a in ud.get("tenant_access", []) if a in valid_tenants]
+    with st.form("dlg_edit_form", clear_on_submit=False):
+        st.markdown(f"**Username:** `{username}`")
+        eu_dname  = st.text_input("Display Name", value=ud.get("display_name", ""))
+        eu_role   = st.selectbox("Role", ["user", "admin"],
+                                 index=0 if ud.get("role") == "user" else 1)
+        eu_access = st.multiselect("Tenant Access", valid_tenants, default=safe_acc)
+        c1, c2 = st.columns(2)
+        save = c1.form_submit_button("✅ Save", use_container_width=True, type="primary")
+        c2.form_submit_button("✖ Cancel", use_container_width=True)
+    if save:
+        if not eu_access:
+            st.error("Select at least one tenant.")
+        else:
+            updated = dict(st.session_state.users[username])
+            updated["display_name"]  = eu_dname.strip() or username
+            updated["role"]          = eu_role
+            updated["tenant_access"] = eu_access
+            save_user_to_db(username, updated)
+            st.session_state.users       = load_users_from_db()
+            st.session_state._dlg_action = None
+            st.session_state._dlg_target = None
+            st.rerun()
+
+
+@st.dialog("🔑 Change Password", width="large")
+def dlg_change_pw(username):
+    st.markdown(f"**Username:** `{username}`")
+    with st.form("dlg_pw_form", clear_on_submit=True):
+        p1 = st.text_input("New Password",     type="password")
+        p2 = st.text_input("Confirm Password", type="password")
+        c1, c2 = st.columns(2)
+        save = c1.form_submit_button("✅ Update", use_container_width=True, type="primary")
+        c2.form_submit_button("✖ Cancel", use_container_width=True)
+    if save:
+        if not p1:
+            st.error("Password cannot be empty.")
+        elif p1 != p2:
+            st.error("Passwords do not match.")
+        else:
+            updated = dict(st.session_state.users[username])
+            updated["password_hash"] = hash_pw(p1)
+            save_user_to_db(username, updated)
+            st.session_state.users       = load_users_from_db()
+            st.session_state._dlg_action = None
+            st.session_state._dlg_target = None
+            st.rerun()
+
+
+@st.dialog("🗑️ Delete User", width="medium")
+def dlg_delete_user(username):
+    st.warning(f"Delete **{username}**? This cannot be undone.", icon="⚠️")
+    c1, c2 = st.columns(2)
+    if c1.button("🗑️ Yes, Delete", use_container_width=True, type="primary"):
+        if username in st.session_state.users:
+            del st.session_state.users[username]
+        delete_user_from_db(username)
+        st.session_state.users       = load_users_from_db()
+        st.session_state._dlg_action = None
+        st.session_state._dlg_target = None
+        st.rerun()
+    if c2.button("✖ Cancel", use_container_width=True):
+        st.session_state._dlg_action = None
+        st.session_state._dlg_target = None
+        st.rerun()
+
+
+# ── Tenant dialogs ────────────────────────────────────────────────────
+
+@st.dialog("➕ Add New Tenant", width="large")
+def dlg_add_tenant():
+    live_types = load_tenant_types_from_db()
+    with st.form("dlg_add_tenant", clear_on_submit=True):
+        tn = st.text_input("Tenant Name", placeholder="e.g. Marina Bay Tower")
+        tt = st.selectbox("Tenant Type", live_types if live_types else ["(no types defined)"])
+        c1, c2 = st.columns(2)
+        add = c1.form_submit_button("✅ Add", use_container_width=True, type="primary")
+        c2.form_submit_button("✖ Cancel", use_container_width=True)
+    if add:
+        name = tn.strip()
+        if not name:
+            st.error("Tenant name cannot be empty.")
+        elif name in get_tenant_names():
+            st.error("Tenant already exists.")
+        elif not live_types:
+            st.error("Add at least one Tenant Type first.")
+        else:
+            add_tenant_to_db(name, tt)
+            st.session_state.tenants      = load_tenants_from_db()
+            st.session_state._tdlg_action = None
+            st.rerun()
+
+
+@st.dialog("✏️ Edit Tenant", width="large")
+def dlg_edit_tenant(tenant_name):
+    live_types = load_tenant_types_from_db()
+    cur_map    = {t["name"]: t["type"] for t in load_tenants_from_db()}
+    cur_type   = cur_map.get(tenant_name, "")
+    safe_idx   = live_types.index(cur_type) if cur_type in live_types else 0
+    with st.form("dlg_edit_tenant", clear_on_submit=False):
+        st.markdown(f"**Tenant:** `{tenant_name}`")
+        new_type = st.selectbox("Tenant Type",
+                                live_types if live_types else ["(no types)"],
+                                index=safe_idx)
+        c1, c2 = st.columns(2)
+        save = c1.form_submit_button("✅ Save", use_container_width=True, type="primary")
+        c2.form_submit_button("✖ Cancel", use_container_width=True)
+    if save:
+        update_tenant_type_in_db(tenant_name, new_type)
+        st.session_state.tenants      = load_tenants_from_db()
+        st.session_state._tdlg_action = None
+        st.session_state._tdlg_target = None
+        st.rerun()
+
+
+@st.dialog("🗑️ Delete Tenant", width="medium")
+def dlg_delete_tenant(tenant_name):
+    st.warning(f"Delete **{tenant_name}**? This cannot be undone.", icon="⚠️")
+    st.caption("Users assigned to this tenant will have it removed from their access.")
+    c1, c2 = st.columns(2)
+    if c1.button("🗑️ Yes, Delete", use_container_width=True, type="primary"):
+        delete_tenant_from_db(tenant_name)
+        for uname, ud in st.session_state.users.items():
+            if tenant_name in ud["tenant_access"]:
+                ud["tenant_access"] = [t for t in ud["tenant_access"] if t != tenant_name]
+                save_user_to_db(uname, ud)
+        st.session_state.tenants      = load_tenants_from_db()
+        st.session_state.users        = load_users_from_db()
+        st.session_state._tdlg_action = None
+        st.session_state._tdlg_target = None
+        st.rerun()
+    if c2.button("✖ Cancel", use_container_width=True):
+        st.session_state._tdlg_action = None
+        st.session_state._tdlg_target = None
+        st.rerun()
+
+
+@st.dialog("🗂️ Manage Tenant Types", width="large")
+def dlg_manage_types():
+    cur_types = load_tenant_types_from_db()
+    st.markdown("**Current Types**")
+    if cur_types:
+        st.dataframe(pd.DataFrame({"Tenant Type": cur_types}),
+                     use_container_width=True, hide_index=True)
+    else:
+        st.info("No types defined.")
+    st.markdown("---")
+    with st.form("dlg_add_type", clear_on_submit=True):
+        new_t = st.text_input("Add New Type", placeholder="e.g. Co-Working")
+        ca, cb = st.columns(2)
+        add_t = ca.form_submit_button("➕ Add", use_container_width=True, type="primary")
+        cb.form_submit_button("Close", use_container_width=True)
+    if add_t:
+        nt = new_t.strip()
+        if not nt:
+            st.error("Name cannot be empty.")
+        elif nt in cur_types:
+            st.error("Already exists.")
+        else:
+            add_tenant_type_to_db(nt)
+            st.session_state.tenant_types = load_tenant_types_from_db()
+            st.rerun()
+    st.markdown("---")
+    st.markdown("**Delete a Type**")
+    if cur_types:
+        with st.form("dlg_del_type", clear_on_submit=True):
+            del_t = st.selectbox("Select Type to Delete", cur_types)
+            cd1, cd2 = st.columns(2)
+            del_btn = cd1.form_submit_button("🗑️ Delete", type="primary", use_container_width=True)
+            cd2.form_submit_button("Cancel", use_container_width=True)
+        if del_btn:
+            delete_tenant_type_from_db(del_t)
+            st.session_state.tenant_types = load_tenant_types_from_db()
+            st.rerun()
+
+
+# ── Assessment dialogs ────────────────────────────────────────────────
+
+@st.dialog("➕ New Assessment", width="large")
+def dlg_new_assessment():
+    current_user     = st.session_state.current_user
+    is_admin         = st.session_state.current_role == "admin"
+    tenant_access    = st.session_state.users[current_user]["tenant_access"]
+    tenants_for_form = get_tenant_names() if is_admin else tenant_access
+    with st.form("frm_new_assessment", clear_on_submit=True):
+        aname = st.text_input("Assessment Name", placeholder="e.g. Q1 Floor Survey 2025")
+        tname = st.selectbox("Tenant", tenants_for_form if tenants_for_form else ["(no tenants)"])
+        sb1, sb2 = st.columns(2)
+        ok  = sb1.form_submit_button("✅ Create", type="primary", use_container_width=True)
+        sb2.form_submit_button("✖ Cancel", use_container_width=True)
+    if ok:
+        if not aname.strip():
+            st.error("Assessment Name is required.")
+        elif not tenants_for_form:
+            st.error("No tenants available.")
+        else:
+            new_id = create_assessment(aname.strip(), tname, current_user)
+            st.session_state._adlg_action     = None
+            st.session_state._open_assessment = new_id
+            st.rerun()
+
+
+@st.dialog("✏️ Edit Assessment", width="large")
+def dlg_edit_assessment(a):
+    current_user     = st.session_state.current_user
+    is_admin         = st.session_state.current_role == "admin"
+    tenant_access    = st.session_state.users[current_user]["tenant_access"]
+    tenants_for_form = get_tenant_names() if is_admin else tenant_access
+    cur_t  = a["tenant_name"]
+    t_idx  = tenants_for_form.index(cur_t) if cur_t in tenants_for_form else 0
+    with st.form("frm_edit_assessment"):
+        aname = st.text_input("Assessment Name", value=a["assessment_name"])
+        tname = st.selectbox("Tenant", tenants_for_form, index=t_idx)
+        sb1, sb2 = st.columns(2)
+        ok  = sb1.form_submit_button("✅ Save", type="primary", use_container_width=True)
+        sb2.form_submit_button("✖ Cancel", use_container_width=True)
+    if ok:
+        if not aname.strip():
+            st.error("Assessment Name is required.")
+        else:
+            update_assessment_header(a["id"], aname.strip(), tname)
+            st.session_state._adlg_action = None
+            st.session_state._adlg_target = None
+            st.rerun()
+
+
+@st.dialog("🗑️ Delete Assessment", width="medium")
+def dlg_delete_assessment(a):
+    summary = get_assessment_summary(a["id"])
+    st.warning(
+        f"Delete **{a['assessment_name']}**? "
+        f"This will also remove **{summary['count']} area records**.",
+        icon="⚠️"
+    )
+    c1, c2 = st.columns(2)
+    if c1.button("🗑️ Yes, Delete", type="primary", use_container_width=True):
+        delete_assessment(a["id"])
+        st.session_state._adlg_action = None
+        st.session_state._adlg_target = None
+        st.rerun()
+    if c2.button("✖ Cancel", use_container_width=True):
+        st.session_state._adlg_action = None
+        st.session_state._adlg_target = None
+        st.rerun()
+
+
+@st.dialog("➕ Add Area", width="large")
+def dlg_add_area():
+    aid = st.session_state._open_assessment
+    with st.form("frm_add_area", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        aname = c1.text_input("Area Name", placeholder="e.g. Main Lobby")
+        cat   = c2.selectbox("Category", _CATS)
+        sqft  = st.number_input("Coverage (SQFT)", min_value=0.0, step=0.5)
+        sb1, sb2 = st.columns(2)
+        ok  = sb1.form_submit_button("✅ Add Area", type="primary", use_container_width=True)
+        sb2.form_submit_button("✖ Cancel", use_container_width=True)
+    if ok:
+        if not aname.strip() or sqft <= 0:
+            st.error("Area Name and SQFT > 0 required.")
+        else:
+            add_area_to_assessment(aid, aname.strip(), cat, sqft)
+            st.session_state._adlg_action = None
+            st.rerun()
+
+
+@st.dialog("✏️ Edit Area", width="large")
+def dlg_edit_area(area):
+    cur_idx = _CATS.index(area["category"]) if area["category"] in _CATS else 0
+    with st.form("frm_edit_area"):
+        c1, c2 = st.columns(2)
+        aname = c1.text_input("Area Name", value=area["area_name"])
+        cat   = c2.selectbox("Category", _CATS, index=cur_idx)
+        sqft  = st.number_input("Coverage (SQFT)", value=float(area["sqft"]),
+                                min_value=0.0, step=0.5)
+        sb1, sb2 = st.columns(2)
+        ok  = sb1.form_submit_button("✅ Save", type="primary", use_container_width=True)
+        sb2.form_submit_button("✖ Cancel", use_container_width=True)
+    if ok:
+        if not aname.strip() or sqft <= 0:
+            st.error("Area Name and SQFT > 0 required.")
+        else:
+            update_area(area["id"], aname.strip(), cat, sqft)
+            st.session_state._adlg_action = None
+            st.session_state._adlg_target = None
+            st.rerun()
+
+
+@st.dialog("🗑️ Delete Area", width="medium")
+def dlg_delete_area(area):
+    st.warning(f"Delete area **{area['area_name']}**?", icon="⚠️")
+    c1, c2 = st.columns(2)
+    if c1.button("🗑️ Yes, Delete", type="primary", use_container_width=True):
+        delete_area(area["id"])
+        st.session_state._adlg_action = None
+        st.session_state._adlg_target = None
+        st.rerun()
+    if c2.button("✖ Cancel", use_container_width=True):
+        st.session_state._adlg_action = None
+        st.session_state._adlg_target = None
+        st.rerun()
+
+
+
+
 def show_login():
     _, col, _ = st.columns([1, 1.4, 1])
     with col:
@@ -813,136 +1175,10 @@ def show_admin_panel():
 
     # ── TAB 1 : User Management ──────────────────────────────────────
     with tab_users:
-        DOMAIN = "@dexxora360"
-
-        # ── Dialog: Add New User ──────────────────────────────────────
-        @st.dialog("➕ Add New User", width="large")
-        def dialog_add_user():
-            with st.form("dlg_add_user_form", clear_on_submit=True):
-                nu_col, nu_suf = st.columns([3, 2])
-                with nu_col:
-                    nu_prefix = st.text_input("Username")
-                with nu_suf:
-                    st.markdown(
-                        f"<div style='margin-top:28px;background:#e8edf3;border:1px solid #c8d3de;"
-                        f"border-radius:6px;padding:8px 10px;color:#2E3B4E;font-weight:600;"
-                        f"font-size:0.9rem;text-align:center;'>{DOMAIN}</div>",
-                        unsafe_allow_html=True,
-                    )
-                nd  = st.text_input("Display Name")
-                nr  = st.selectbox("Role", ["user", "admin"])
-                nh  = st.multiselect("Tenant Access", get_tenant_names(),
-                                     default=get_tenant_names()[:1])
-                np1 = st.text_input("Password",         type="password")
-                np2 = st.text_input("Confirm Password", type="password")
-                c1, c2 = st.columns(2)
-                add = c1.form_submit_button("✅ Add User",    use_container_width=True, type="primary")
-                c2.form_submit_button(      "✖ Cancel",       use_container_width=True)
-            if add:
-                nu = (nu_prefix.strip() + DOMAIN) if nu_prefix.strip() else ""
-                if not nu_prefix.strip() or not np1:
-                    st.error("Username and password are required.")
-                elif nu in st.session_state.users:
-                    st.error(f"Username **{nu}** already exists.")
-                elif np1 != np2:
-                    st.error("Passwords do not match.")
-                elif not nh:
-                    st.error("Select at least one tenant.")
-                else:
-                    st.session_state.users[nu] = {
-                        "password_hash": hash_pw(np1),
-                        "role":          nr,
-                        "tenant_access": nh,
-                        "display_name":  nd or nu_prefix.strip(),
-                    }
-                    save_users_to_secrets(st.session_state.users)
-                    st.session_state.users = load_users_from_db()
-                    st.session_state._dlg_action = None
-                    st.session_state._dlg_target = None
-                    st.rerun()
-
-        # ── Dialog: Edit User ─────────────────────────────────────────
-        @st.dialog("✏️ Edit User", width="large")
-        def dialog_edit_user(username):
-            ud            = st.session_state.users.get(username, {})
-            valid_tenants = get_tenant_names()
-            safe_acc      = [a for a in ud.get("tenant_access", []) if a in valid_tenants]
-            with st.form("dlg_edit_form", clear_on_submit=False):
-                st.markdown(f"**Username:** `{username}`")
-                eu_dname  = st.text_input("Display Name", value=ud.get("display_name", ""))
-                eu_role   = st.selectbox("Role", ["user", "admin"],
-                                         index=0 if ud.get("role") == "user" else 1)
-                eu_access = st.multiselect("Tenant Access", valid_tenants, default=safe_acc)
-                c1, c2 = st.columns(2)
-                save = c1.form_submit_button("✅ Save", use_container_width=True, type="primary")
-                c2.form_submit_button(       "✖ Cancel", use_container_width=True)
-            if save:
-                if not eu_access:
-                    st.error("Select at least one tenant.")
-                else:
-                    updated = dict(st.session_state.users[username])
-                    updated["display_name"]  = eu_dname.strip() or username
-                    updated["role"]          = eu_role
-                    updated["tenant_access"] = eu_access
-                    st.session_state.users[username] = updated
-                    save_user_to_db(username, updated)
-                    # Reload fresh from DB so grid reflects changes immediately
-                    st.session_state.users = load_users_from_db()
-                    st.session_state._dlg_action = None
-                    st.session_state._dlg_target = None
-                    st.rerun()
-
-        # ── Dialog: Change Password ───────────────────────────────────
-        @st.dialog("🔑 Change Password", width="large")
-        def dialog_change_pw(username):
-            st.markdown(f"**Username:** `{username}`")
-            with st.form("dlg_pw_form", clear_on_submit=True):
-                p1 = st.text_input("New Password",     type="password")
-                p2 = st.text_input("Confirm Password", type="password")
-                c1, c2 = st.columns(2)
-                save = c1.form_submit_button("✅ Update", use_container_width=True, type="primary")
-                c2.form_submit_button(       "✖ Cancel",  use_container_width=True)
-            if save:
-                if not p1:
-                    st.error("Password cannot be empty.")
-                elif p1 != p2:
-                    st.error("Passwords do not match.")
-                else:
-                    updated = dict(st.session_state.users[username])
-                    updated["password_hash"] = hash_pw(p1)
-                    save_user_to_db(username, updated)
-                    st.session_state.users = load_users_from_db()
-                    st.session_state._dlg_action = None
-                    st.session_state._dlg_target = None
-                    st.rerun()
-
-        # ── Dialog: Delete User ───────────────────────────────────────
-        @st.dialog("🗑️ Delete User", width="medium")
-        def dialog_delete_user(username):
-            st.warning(f"Are you sure you want to delete **{username}**? This cannot be undone.", icon="⚠️")
-            c1, c2 = st.columns(2)
-            if c1.button("🗑️ Yes, Delete", use_container_width=True, type="primary"):
-                # Remove from session state
-                if username in st.session_state.users:
-                    del st.session_state.users[username]
-                # Remove from DB
-                delete_user_from_db(username)
-                # Reload fresh from DB
-                st.session_state.users = load_users_from_db()
-                st.session_state._dlg_action = None
-                st.session_state._dlg_target = None
-                st.rerun()
-            if c2.button("✖ Cancel", use_container_width=True):
-                st.session_state._dlg_action = None
-                st.session_state._dlg_target = None
-                st.rerun()
-
-        # ── Trigger state for dialogs ─────────────────────────────────
         for key in ["_dlg_action", "_dlg_target"]:
             if key not in st.session_state:
                 st.session_state[key] = None
 
-        # ── Toolbar: Add New button ───────────────────────────────────
         btn_col, _ = st.columns([1, 5])
         if btn_col.button("➕ Add New User", type="primary", use_container_width=True):
             st.session_state._dlg_action = "add"
@@ -950,12 +1186,10 @@ def show_admin_panel():
 
         st.markdown("---")
 
-        # ── User Grid ────────────────────────────────────────────────
         users_list = list(st.session_state.users.items())
         if not users_list:
             st.info("No users found.")
         else:
-            # Header row
             hc = st.columns([2.5, 2, 1.5, 2.5, 2])
             for col, label in zip(hc, ["Username", "Display Name", "Role", "Tenant Access", "Actions"]):
                 col.markdown(f"**{label}**")
@@ -972,8 +1206,6 @@ def show_admin_panel():
                     unsafe_allow_html=True,
                 )
                 rc[3].markdown(", ".join(ud["tenant_access"]) or "—")
-
-                # Action buttons
                 ab1, ab2, ab3 = rc[4].columns(3)
                 if ab1.button("✏️", key=f"edit_{uname}", help="Edit user"):
                     st.session_state._dlg_action = "edit"
@@ -986,138 +1218,23 @@ def show_admin_panel():
                         st.session_state._dlg_action = "delete"
                         st.session_state._dlg_target = uname
 
-        # ── Open correct dialog based on action state ─────────────────
         action = st.session_state._dlg_action
         target = st.session_state._dlg_target
         if action == "add":
-            dialog_add_user()
+            dlg_add_user()
         elif action == "edit" and target:
-            dialog_edit_user(target)
+            dlg_edit_user(target)
         elif action == "pw" and target:
-            dialog_change_pw(target)
+            dlg_change_pw(target)
         elif action == "delete" and target:
-            dialog_delete_user(target)
+            dlg_delete_user(target)
 
     # ── TAB 2 : Tenant Management ─────────────────────────────────────
     with tab_tenants:
-
-        # ── Dialog: Add Tenant ────────────────────────────────────────
-        @st.dialog("➕ Add New Tenant", width="large")
-        def dialog_add_tenant():
-            live_types = load_tenant_types_from_db()
-            with st.form("dlg_add_tenant", clear_on_submit=True):
-                tn = st.text_input("Tenant Name", placeholder="e.g. Marina Bay Tower")
-                tt = st.selectbox("Tenant Type",
-                                  live_types if live_types else ["(no types defined)"])
-                c1, c2 = st.columns(2)
-                add = c1.form_submit_button("✅ Add", use_container_width=True, type="primary")
-                c2.form_submit_button("✖ Cancel", use_container_width=True)
-            if add:
-                name = tn.strip()
-                if not name:
-                    st.error("Tenant name cannot be empty.")
-                elif name in get_tenant_names():
-                    st.error("Tenant already exists.")
-                elif not live_types:
-                    st.error("Add at least one Tenant Type first.")
-                else:
-                    add_tenant_to_db(name, tt)
-                    st.session_state.tenants = load_tenants_from_db()
-                    st.session_state._tdlg_action = None
-                    st.rerun()
-
-        # ── Dialog: Edit Tenant ───────────────────────────────────────
-        @st.dialog("✏️ Edit Tenant", width="large")
-        def dialog_edit_tenant(tenant_name):
-            live_types = load_tenant_types_from_db()
-            cur_map    = {t["name"]: t["type"] for t in load_tenants_from_db()}
-            cur_type   = cur_map.get(tenant_name, "")
-            safe_idx   = live_types.index(cur_type) if cur_type in live_types else 0
-            with st.form("dlg_edit_tenant", clear_on_submit=False):
-                st.markdown(f"**Tenant:** `{tenant_name}`")
-                new_type = st.selectbox("Tenant Type",
-                                        live_types if live_types else ["(no types)"],
-                                        index=safe_idx)
-                c1, c2 = st.columns(2)
-                save = c1.form_submit_button("✅ Save", use_container_width=True, type="primary")
-                c2.form_submit_button("✖ Cancel", use_container_width=True)
-            if save:
-                update_tenant_type_in_db(tenant_name, new_type)
-                st.session_state.tenants = load_tenants_from_db()
-                st.session_state._tdlg_action = None
-                st.session_state._tdlg_target = None
-                st.rerun()
-
-        # ── Dialog: Delete Tenant ─────────────────────────────────────
-        @st.dialog("🗑️ Delete Tenant", width="medium")
-        def dialog_delete_tenant(tenant_name):
-            st.warning(f"Delete **{tenant_name}**? This cannot be undone.", icon="⚠️")
-            st.caption("Users assigned to this tenant will have it removed from their access.")
-            c1, c2 = st.columns(2)
-            if c1.button("🗑️ Yes, Delete", use_container_width=True, type="primary"):
-                delete_tenant_from_db(tenant_name)
-                for uname, ud in st.session_state.users.items():
-                    if tenant_name in ud["tenant_access"]:
-                        ud["tenant_access"] = [t for t in ud["tenant_access"] if t != tenant_name]
-                        save_user_to_db(uname, ud)
-                st.session_state.tenants = load_tenants_from_db()
-                st.session_state.users   = load_users_from_db()
-                st.session_state._tdlg_action = None
-                st.session_state._tdlg_target = None
-                st.rerun()
-            if c2.button("✖ Cancel", use_container_width=True):
-                st.session_state._tdlg_action = None
-                st.session_state._tdlg_target = None
-                st.rerun()
-
-        # ── Dialog: Manage Tenant Types ───────────────────────────────
-        @st.dialog("🗂️ Manage Tenant Types", width="large")
-        def dialog_manage_types():
-            cur_types = load_tenant_types_from_db()
-            st.markdown("**Current Types**")
-            if cur_types:
-                st.dataframe(pd.DataFrame({"Tenant Type": cur_types}),
-                             use_container_width=True, hide_index=True)
-            else:
-                st.info("No types defined.")
-            st.markdown("---")
-            with st.form("dlg_add_type", clear_on_submit=True):
-                new_t = st.text_input("Add New Type", placeholder="e.g. Co-Working")
-                ca, cb = st.columns(2)
-                add_t = ca.form_submit_button("➕ Add", use_container_width=True, type="primary")
-                ca2 = cb.form_submit_button("Close", use_container_width=True)
-            if add_t:
-                nt = new_t.strip()
-                if not nt:
-                    st.error("Name cannot be empty.")
-                elif nt in cur_types:
-                    st.error("Already exists.")
-                else:
-                    add_tenant_type_to_db(nt)
-                    st.session_state.tenant_types = load_tenant_types_from_db()
-                    st.rerun()
-            if ca2:
-                st.session_state._tdlg_action = None
-                st.rerun()
-            st.markdown("---")
-            st.markdown("**Delete a Type**")
-            if cur_types:
-                with st.form("dlg_del_type", clear_on_submit=True):
-                    del_t = st.selectbox("Select Type to Delete", cur_types)
-                    cd1, cd2 = st.columns(2)
-                    del_btn = cd1.form_submit_button("🗑️ Delete", type="primary", use_container_width=True)
-                    cd2.form_submit_button("Cancel", use_container_width=True)
-                if del_btn:
-                    delete_tenant_type_from_db(del_t)
-                    st.session_state.tenant_types = load_tenant_types_from_db()
-                    st.rerun()
-
-        # ── Dialog state init ─────────────────────────────────────────
         for k in ["_tdlg_action", "_tdlg_target"]:
             if k not in st.session_state:
                 st.session_state[k] = None
 
-        # ── Toolbar ───────────────────────────────────────────────────
         tb1, tb2, _ = st.columns([1, 1, 4])
         if tb1.button("➕ Add Tenant", type="primary", use_container_width=True):
             st.session_state._tdlg_action = "add"
@@ -1128,7 +1245,6 @@ def show_admin_panel():
 
         st.markdown("---")
 
-        # ── Tenant Grid ───────────────────────────────────────────────
         tenants = load_tenants_from_db()
         if not tenants:
             st.info("No tenants added yet.")
@@ -1158,20 +1274,18 @@ def show_admin_panel():
                     st.session_state._tdlg_action = "delete"
                     st.session_state._tdlg_target = t["name"]
 
-        # ── Open correct dialog ───────────────────────────────────────
         taction = st.session_state._tdlg_action
         ttarget = st.session_state._tdlg_target
         if taction == "add":
-            dialog_add_tenant()
+            dlg_add_tenant()
         elif taction == "edit" and ttarget:
-            dialog_edit_tenant(ttarget)
+            dlg_edit_tenant(ttarget)
         elif taction == "delete" and ttarget:
-            dialog_delete_tenant(ttarget)
+            dlg_delete_tenant(ttarget)
         elif taction == "types":
-            dialog_manage_types()
+            dlg_manage_types()
 
-
-        # ── TAB 3 : All Tenant Data ───────────────────────────────────────
+    # ── TAB 3 : All Tenant Data ───────────────────────────────────────
     with tab_data:
         st.subheader("All Assessment Records")
         flat_df = load_assessment_from_db()
@@ -1184,9 +1298,9 @@ def show_admin_panel():
             vdf = disp[disp["Tenant Name"].isin(hf)]
             st.dataframe(vdf, use_container_width=True, hide_index=True)
             c1, c2, c3 = st.columns(3)
-            c1.metric("Assessments", vdf["Assessment ID"].nunique())
+            c1.metric("Assessments", vdf["Assessment ID"].nunique() if "Assessment ID" in vdf.columns else 0)
             c2.metric("Total Areas", len(vdf))
-            c3.metric("Total SQFT",  f"{vdf['Coverage (SQFT)'].sum():,.1f}")
+            c3.metric("Total SQFT",  f"{vdf['Coverage (SQFT)'].sum():,.1f}" if "Coverage (SQFT)" in vdf.columns else "0")
 
         st.markdown("---")
         if st.button("🗑️ Clear ALL Data", type="primary"):
@@ -1217,16 +1331,13 @@ def show_admin_panel():
             else:
                 st.warning("No data for selected tenants.")
 
-# ─────────────────────────────────────────────
-# ASSESSMENT PAGE
-# ─────────────────────────────────────────────
+
+
 def show_assessment():
     is_admin      = st.session_state.current_role == "admin"
     current_user  = st.session_state.current_user
     user_data     = st.session_state.users[current_user]
     tenant_access = user_data["tenant_access"]
-    CATS = ["Suite/Room", "Restaurant & Bar", "Lobby",
-            "Function Venue", "Outdoor", "Gym", "Other"]
 
     st.markdown(
         f"<img src='data:image/png;base64,{LOGO_FULL_B64}' "
@@ -1236,18 +1347,14 @@ def show_assessment():
     st.title("Virtual360 Cost Assessment")
     st.markdown("---")
 
-    # ── Session state init ────────────────────────────────────────────
     for k, v in [("_adlg_action", None), ("_adlg_target", None),
                  ("_open_assessment", None)]:
         if k not in st.session_state:
             st.session_state[k] = v
 
-    # ─────────────────────────────────────────────────────────────────
-    # DETAIL VIEW  — open assessment with area management
-    # ─────────────────────────────────────────────────────────────────
+    # ── DETAIL VIEW ────────────────────────────────────────────────────
     if st.session_state._open_assessment is not None:
         aid = st.session_state._open_assessment
-        # Load header
         with get_db() as conn:
             hdr = conn.execute(
                 "SELECT id, assessment_name, tenant_name, date_added, created_by "
@@ -1256,82 +1363,25 @@ def show_assessment():
         if not hdr:
             st.session_state._open_assessment = None
             st.rerun()
-
-        hdr = dict(hdr)
+        hdr   = dict(hdr)
         areas = load_areas(aid)
         total_sqft = sum(a["sqft"] for a in areas)
 
-        # ── Back button ───────────────────────────────────────────────
         if st.button("← Back to Assessments"):
             st.session_state._open_assessment = None
+            st.session_state._adlg_action     = None
             st.rerun()
 
         st.markdown(f"## 📋 {hdr['assessment_name']}")
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Tenant",       hdr["tenant_name"])
-        m2.metric("Date",         hdr["date_added"])
-        m3.metric("Areas",        len(areas))
-        m4.metric("Total SQFT",   f"{total_sqft:,.1f}")
+        m1.metric("Tenant",     hdr["tenant_name"])
+        m2.metric("Date",       hdr["date_added"])
+        m3.metric("Areas",      len(areas))
+        m4.metric("Total SQFT", f"{total_sqft:,.1f}")
         if is_admin:
-            creator = str(hdr.get("created_by","")).split("@")[0]
-            st.caption(f"Created by: **{creator}**")
+            st.caption(f"Created by: **{str(hdr.get('created_by','')).split('@')[0]}**")
         st.markdown("---")
 
-        # ── Dialogs for area CRUD ─────────────────────────────────────
-        @st.dialog("➕ Add Area", width="large")
-        def dialog_add_area():
-            with st.form("frm_add_area", clear_on_submit=True):
-                c1, c2 = st.columns(2)
-                aname = c1.text_input("Area Name", placeholder="e.g. Main Lobby")
-                cat   = c2.selectbox("Category", CATS)
-                sqft  = st.number_input("Coverage (SQFT)", min_value=0.0, step=0.5)
-                sb1, sb2 = st.columns(2)
-                ok  = sb1.form_submit_button("✅ Add Area", type="primary", use_container_width=True)
-                sb2.form_submit_button("✖ Cancel", use_container_width=True)
-            if ok:
-                if not aname.strip() or sqft <= 0:
-                    st.error("Area Name and SQFT > 0 required.")
-                else:
-                    add_area_to_assessment(aid, aname.strip(), cat, sqft)
-                    st.session_state._adlg_action = None
-                    st.rerun()
-
-        @st.dialog("✏️ Edit Area", width="large")
-        def dialog_edit_area(area):
-            cur_idx = CATS.index(area["category"]) if area["category"] in CATS else 0
-            with st.form("frm_edit_area"):
-                c1, c2 = st.columns(2)
-                aname = c1.text_input("Area Name", value=area["area_name"])
-                cat   = c2.selectbox("Category", CATS, index=cur_idx)
-                sqft  = st.number_input("Coverage (SQFT)", value=float(area["sqft"]),
-                                        min_value=0.0, step=0.5)
-                sb1, sb2 = st.columns(2)
-                ok  = sb1.form_submit_button("✅ Save", type="primary", use_container_width=True)
-                sb2.form_submit_button("✖ Cancel", use_container_width=True)
-            if ok:
-                if not aname.strip() or sqft <= 0:
-                    st.error("Area Name and SQFT > 0 required.")
-                else:
-                    update_area(area["id"], aname.strip(), cat, sqft)
-                    st.session_state._adlg_action = None
-                    st.session_state._adlg_target = None
-                    st.rerun()
-
-        @st.dialog("🗑️ Delete Area", width="medium")
-        def dialog_delete_area(area):
-            st.warning(f"Delete area **{area['area_name']}**?", icon="⚠️")
-            c1, c2 = st.columns(2)
-            if c1.button("🗑️ Yes, Delete", type="primary", use_container_width=True):
-                delete_area(area["id"])
-                st.session_state._adlg_action = None
-                st.session_state._adlg_target = None
-                st.rerun()
-            if c2.button("✖ Cancel", use_container_width=True):
-                st.session_state._adlg_action = None
-                st.session_state._adlg_target = None
-                st.rerun()
-
-        # ── Add area / Export buttons ─────────────────────────────────
         ab1, ab2, _ = st.columns([1.2, 1.2, 4])
         if ab1.button("➕ Add Area", type="primary", use_container_width=True):
             st.session_state._adlg_action = "add_area"
@@ -1341,26 +1391,16 @@ def show_assessment():
             pdf_df = pd.DataFrame(areas).rename(columns={
                 "area_name": "Area Name", "category": "Category", "sqft": "Coverage (SQFT)"
             })[["Area Name", "Category", "Coverage (SQFT)"]]
-            try:
-                pdf_bytes = generate_pdf(
-                    pdf_df,
-                    title=f"{hdr['assessment_name']} — {hdr['tenant_name']}"
-                )
-            except Exception as _ex:
-                pdf_bytes = None
-                st.error(f"PDF error: {_ex}")
-            if pdf_bytes:
-                ab2.download_button(
-                    label="📥 Export PDF",
-                    data=pdf_bytes,
-                    file_name=f"{hdr['assessment_name'].replace(' ','_')}_{datetime.now():%Y%m%d}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                )
+            ab2.download_button(
+                label="📥 Export PDF",
+                data=generate_pdf(pdf_df, title=f"{hdr['assessment_name']} — {hdr['tenant_name']}"),
+                file_name=f"{hdr['assessment_name'].replace(' ','_')}_{datetime.now():%Y%m%d}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
 
         st.markdown("")
 
-        # ── Areas grid ────────────────────────────────────────────────
         if not areas:
             st.info("No areas yet — click **➕ Add Area** to start.")
         else:
@@ -1373,25 +1413,20 @@ def show_assessment():
             st.markdown("<hr style='margin:3px 0 4px;border-color:#e0e7ef;'>", unsafe_allow_html=True)
 
             cat_colors = {
-                "Suite/Room": "#1565C0", "Restaurant & Bar": "#6A1B9A",
-                "Lobby": "#00695C", "Function Venue": "#E65100",
-                "Outdoor": "#2E7D32", "Gym": "#AD1457", "Other": "#546E7A"
+                "Suite/Room":"#1565C0","Restaurant & Bar":"#6A1B9A",
+                "Lobby":"#00695C","Function Venue":"#E65100",
+                "Outdoor":"#2E7D32","Gym":"#AD1457","Other":"#546E7A"
             }
-
             for i, area in enumerate(areas, 1):
                 rc = st.columns(AREA_W)
-                rc[0].markdown(f"<span style='color:#aaa;font-size:.82rem;'>{i}</span>",
-                               unsafe_allow_html=True)
-                rc[1].markdown(f"<span style='font-size:.88rem;'>{area['area_name']}</span>",
-                               unsafe_allow_html=True)
+                rc[0].markdown(f"<span style='color:#aaa;font-size:.82rem;'>{i}</span>", unsafe_allow_html=True)
+                rc[1].markdown(f"<span style='font-size:.88rem;'>{area['area_name']}</span>", unsafe_allow_html=True)
                 c = cat_colors.get(area["category"], "#546E7A")
                 rc[2].markdown(
                     f"<span style='background:{c};color:#fff;padding:2px 9px;"
                     f"border-radius:12px;font-size:.78rem;'>{area['category']}</span>",
-                    unsafe_allow_html=True
-                )
-                rc[3].markdown(f"<span style='font-size:.88rem;'>{area['sqft']:,.1f}</span>",
-                               unsafe_allow_html=True)
+                    unsafe_allow_html=True)
+                rc[3].markdown(f"<span style='font-size:.88rem;'>{area['sqft']:,.1f}</span>", unsafe_allow_html=True)
                 if rc[4].button("✏️", key=f"area_edit_{area['id']}", help="Edit", use_container_width=True):
                     st.session_state._adlg_action = "edit_area"
                     st.session_state._adlg_target = area["id"]
@@ -1400,101 +1435,30 @@ def show_assessment():
                     st.session_state._adlg_target = area["id"]
 
             st.markdown("<hr style='margin:4px 0 3px;border-color:#e0e7ef;'>", unsafe_allow_html=True)
-            tot_cols = st.columns(AREA_W)
-            tot_cols[0].markdown("**Σ**")
-            tot_cols[1].markdown(f"<span style='font-size:.85rem;font-weight:600;'>{len(areas)} areas</span>",
-                                 unsafe_allow_html=True)
-            tot_cols[3].markdown(f"<span style='font-size:.85rem;font-weight:600;'>{total_sqft:,.1f}</span>",
-                                 unsafe_allow_html=True)
+            tot = st.columns(AREA_W)
+            tot[0].markdown("**Σ**")
+            tot[1].markdown(f"<span style='font-size:.85rem;font-weight:600;'>{len(areas)} areas</span>", unsafe_allow_html=True)
+            tot[3].markdown(f"<span style='font-size:.85rem;font-weight:600;'>{total_sqft:,.1f}</span>", unsafe_allow_html=True)
 
-        # ── Open area dialogs ─────────────────────────────────────────
+        # ── open area dialogs ─────────────────────────────────────────
         aact = st.session_state._adlg_action
         atgt = st.session_state._adlg_target
-
         if aact == "add_area":
-            dialog_add_area()
+            dlg_add_area()
         elif aact == "edit_area" and atgt:
-            target_area = next((a for a in areas if a["id"] == atgt), None)
-            if target_area:
-                dialog_edit_area(target_area)
+            tgt = next((a for a in areas if a["id"] == atgt), None)
+            if tgt: dlg_edit_area(tgt)
         elif aact == "del_area" and atgt:
-            target_area = next((a for a in areas if a["id"] == atgt), None)
-            if target_area:
-                dialog_delete_area(target_area)
+            tgt = next((a for a in areas if a["id"] == atgt), None)
+            if tgt: dlg_delete_area(tgt)
+        return
 
-        return   # Don't show list view when detail is open
-
-    # ─────────────────────────────────────────────────────────────────
-    # LIST VIEW  — assessment cards/grid
-    # ─────────────────────────────────────────────────────────────────
-
-    # ── Dialogs for assessment CRUD ───────────────────────────────────
-    @st.dialog("➕ New Assessment", width="large")
-    def dialog_new_assessment():
-        tenants_for_form = get_tenant_names() if is_admin else tenant_access
-        with st.form("frm_new_assessment", clear_on_submit=True):
-            aname = st.text_input("Assessment Name", placeholder="e.g. Q1 Floor Survey 2025")
-            tname = st.selectbox("Tenant", tenants_for_form if tenants_for_form else ["(no tenants)"])
-            sb1, sb2 = st.columns(2)
-            ok  = sb1.form_submit_button("✅ Create", type="primary", use_container_width=True)
-            sb2.form_submit_button("✖ Cancel", use_container_width=True)
-        if ok:
-            if not aname.strip():
-                st.error("Assessment Name is required.")
-            elif not tenants_for_form:
-                st.error("No tenants available.")
-            else:
-                new_id = create_assessment(aname.strip(), tname, current_user)
-                st.session_state._adlg_action     = None
-                st.session_state._open_assessment = new_id
-                st.rerun()
-
-    @st.dialog("✏️ Edit Assessment", width="large")
-    def dialog_edit_assessment(a):
-        tenants_for_form = get_tenant_names() if is_admin else tenant_access
-        cur_t = a["tenant_name"]
-        t_idx = tenants_for_form.index(cur_t) if cur_t in tenants_for_form else 0
-        with st.form("frm_edit_assessment"):
-            aname = st.text_input("Assessment Name", value=a["assessment_name"])
-            tname = st.selectbox("Tenant", tenants_for_form, index=t_idx)
-            sb1, sb2 = st.columns(2)
-            ok  = sb1.form_submit_button("✅ Save", type="primary", use_container_width=True)
-            sb2.form_submit_button("✖ Cancel", use_container_width=True)
-        if ok:
-            if not aname.strip():
-                st.error("Assessment Name is required.")
-            else:
-                update_assessment_header(a["id"], aname.strip(), tname)
-                st.session_state._adlg_action = None
-                st.session_state._adlg_target = None
-                st.rerun()
-
-    @st.dialog("🗑️ Delete Assessment", width="medium")
-    def dialog_delete_assessment(a):
-        summary = get_assessment_summary(a["id"])
-        st.warning(
-            f"Delete **{a['assessment_name']}**?  "
-            f"This will also remove **{summary['count']} area records**.",
-            icon="⚠️"
-        )
-        c1, c2 = st.columns(2)
-        if c1.button("🗑️ Yes, Delete", type="primary", use_container_width=True):
-            delete_assessment(a["id"])
-            st.session_state._adlg_action = None
-            st.session_state._adlg_target = None
-            st.rerun()
-        if c2.button("✖ Cancel", use_container_width=True):
-            st.session_state._adlg_action = None
-            st.session_state._adlg_target = None
-            st.rerun()
-
-    # ── Toolbar ───────────────────────────────────────────────────────
+    # ── LIST VIEW ──────────────────────────────────────────────────────
     tb1, _ = st.columns([1.4, 6])
     if tb1.button("➕ New Assessment", type="primary", use_container_width=True):
         st.session_state._adlg_action = "new_assessment"
         st.session_state._adlg_target = None
 
-    # ── Load assessments ──────────────────────────────────────────────
     if is_admin:
         assessments = load_assessments()
     else:
@@ -1505,26 +1469,19 @@ def show_assessment():
     if not assessments:
         st.info("No assessments yet — click **➕ New Assessment** to create one.")
     else:
-        # Summary bar
-        total_areas = 0
-        total_sqft  = 0.0
-        for a in assessments:
-            s = get_assessment_summary(a["id"])
-            total_areas += s["count"]
-            total_sqft  += s["total_sqft"]
-
+        total_areas = sum(get_assessment_summary(a["id"])["count"] for a in assessments)
+        total_sqft  = sum(get_assessment_summary(a["id"])["total_sqft"] for a in assessments)
         sm1, sm2, sm3 = st.columns(3)
         sm1.metric("Assessments", len(assessments))
         sm2.metric("Total Areas", total_areas)
         sm3.metric("Total SQFT",  f"{total_sqft:,.1f}")
         st.markdown("")
 
-        # Grid header — View | ID | Assessment Name | Tenant | Date | Areas | (Created By) | Edit | Del
         if is_admin:
-            COL_W = [0.6, 0.5, 2.8, 2.2, 1.4, 0.6, 1.4, 0.5, 0.5]
+            COL_W  = [0.6, 0.5, 2.8, 2.2, 1.4, 0.6, 1.4, 0.5, 0.5]
             LABELS = ["", "ID", "Assessment Name", "Tenant", "Date", "Areas", "Created By", "", ""]
         else:
-            COL_W = [0.6, 0.5, 3.2, 2.4, 1.4, 0.6, 0.5, 0.5]
+            COL_W  = [0.6, 0.5, 3.2, 2.4, 1.4, 0.6, 0.5, 0.5]
             LABELS = ["", "ID", "Assessment Name", "Tenant", "Date", "Areas", "", ""]
 
         hcols = st.columns(COL_W)
@@ -1538,30 +1495,15 @@ def show_assessment():
             summary = get_assessment_summary(a["id"])
             rc = st.columns(COL_W)
 
-            # Col 0 — View button (first!)
-            if rc[0].button("👁", key=f"open_{a['id']}", help="Open assessment", use_container_width=True):
+            if rc[0].button("👁", key=f"open_{a['id']}", help="Open", use_container_width=True):
                 st.session_state._open_assessment = a["id"]
                 st.session_state._adlg_action     = None
                 st.rerun()
 
-            # Col 1 — ID
-            rc[1].markdown(f"<span style='color:#888;font-size:.8rem;'>{a['id']}</span>",
-                           unsafe_allow_html=True)
-
-            # Col 2 — Assessment Name
-            rc[2].markdown(
-                f"<span style='font-weight:600;font-size:.88rem;'>{a['assessment_name']}</span>",
-                unsafe_allow_html=True)
-
-            # Col 3 — Tenant
-            rc[3].markdown(f"<span style='font-size:.85rem;'>{a['tenant_name']}</span>",
-                           unsafe_allow_html=True)
-
-            # Col 4 — Date
-            rc[4].markdown(f"<span style='font-size:.82rem;color:#666;'>{a['date_added']}</span>",
-                           unsafe_allow_html=True)
-
-            # Col 5 — Area count badge
+            rc[1].markdown(f"<span style='color:#888;font-size:.8rem;'>{a['id']}</span>", unsafe_allow_html=True)
+            rc[2].markdown(f"<span style='font-weight:600;font-size:.88rem;'>{a['assessment_name']}</span>", unsafe_allow_html=True)
+            rc[3].markdown(f"<span style='font-size:.85rem;'>{a['tenant_name']}</span>", unsafe_allow_html=True)
+            rc[4].markdown(f"<span style='font-size:.82rem;color:#666;'>{a['date_added']}</span>", unsafe_allow_html=True)
             cnt = summary["count"]
             rc[5].markdown(
                 f"<span style='background:#e8f0fe;color:#1a56db;font-size:.78rem;"
@@ -1569,10 +1511,8 @@ def show_assessment():
                 unsafe_allow_html=True)
 
             if is_admin:
-                # Col 6 — Created By
                 creator = str(a.get("created_by","")).split("@")[0]
-                rc[6].markdown(f"<span style='color:#7ec8e3;font-size:.78rem;'>{creator}</span>",
-                               unsafe_allow_html=True)
+                rc[6].markdown(f"<span style='color:#7ec8e3;font-size:.78rem;'>{creator}</span>", unsafe_allow_html=True)
                 edit_col, del_col = rc[7], rc[8]
             else:
                 edit_col, del_col = rc[6], rc[7]
@@ -1586,19 +1526,17 @@ def show_assessment():
 
             st.markdown("<div style='height:2px;'></div>", unsafe_allow_html=True)
 
-    # ── Open dialogs ──────────────────────────────────────────────────
     aact = st.session_state._adlg_action
     atgt = st.session_state._adlg_target
-
     if aact == "new_assessment":
-        dialog_new_assessment()
-    elif aact in ("edit_assessment", "delete_assessment") and atgt:
+        dlg_new_assessment()
+    elif aact in ("edit_assessment","delete_assessment") and atgt:
         match = next((a for a in assessments if a["id"] == atgt), None) if assessments else None
         if match:
             if aact == "edit_assessment":
-                dialog_edit_assessment(match)
+                dlg_edit_assessment(match)
             else:
-                dialog_delete_assessment(match)
+                dlg_delete_assessment(match)
 
 
 def render_topbar(display_name, role):
