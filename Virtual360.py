@@ -890,66 +890,22 @@ def show_assessment():
 
 # ─────────────────────────────────────────────
 # ─────────────────────────────────────────────
-# NAV RAIL  (Streamlit sidebar styled as icon rail)
+# NAVIGATION
 # ─────────────────────────────────────────────
 
-RAIL_CSS = """
+TOPBAR_CSS = """
 <style>
-/* Shrink sidebar to icon-width */
-[data-testid="stSidebar"] {
-    min-width: 64px !important;
-    max-width: 64px !important;
-    background: #1a2535 !important;
-}
-[data-testid="stSidebar"] > div:first-child {
-    padding: 0.5rem 0 !important;
-    width: 64px !important;
-}
-/* Hide sidebar collapse arrow */
-[data-testid="collapsedControl"] { display: none !important; }
-
-/* Style every button in sidebar as an icon button */
-[data-testid="stSidebar"] button {
-    width: 52px !important;
-    height: 52px !important;
-    margin: 2px auto !important;
-    padding: 0 !important;
-    border-radius: 10px !important;
-    border: none !important;
-    background: transparent !important;
-    color: #9ab0c8 !important;
-    font-size: 1.3rem !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    cursor: pointer !important;
-    transition: background .15s, color .15s !important;
-}
-[data-testid="stSidebar"] button:hover {
-    background: #243448 !important;
-    color: #fff !important;
-}
-[data-testid="stSidebar"] button[kind="primary"] {
-    background: #2563eb !important;
-    color: #fff !important;
-}
-[data-testid="stSidebar"] button[kind="primary"]:hover {
-    background: #1d50c8 !important;
-}
-/* Hide any text labels streamlit adds */
-[data-testid="stSidebar"] .stButton p { display: none !important; }
-/* Hide markdown / other noise */
-[data-testid="stSidebar"] hr { border-color: #2e3f52 !important; margin: 4px 6px !important; }
-
-/* Top-right user badge */
-#np-topbar {
-    position: fixed; top: 10px; right: 16px;
-    display: flex; align-items: center; gap: 7px;
-    z-index: 9999;
+.np-topbar {
+    position: fixed; top: 0; right: 0; left: 0;
+    height: 48px;
     background: #1a2535;
-    border: 1px solid #2e3f52;
-    border-radius: 20px;
-    padding: 3px 12px 3px 8px;
+    border-bottom: 1px solid #2e3f52;
+    display: flex; align-items: center; justify-content: flex-end;
+    padding: 0 20px;
+    z-index: 999;
+}
+.np-userinfo {
+    display: flex; align-items: center; gap: 8px;
 }
 .np-avatar {
     width: 30px; height: 30px; border-radius: 50%;
@@ -957,78 +913,81 @@ RAIL_CSS = """
     display: flex; align-items: center; justify-content: center;
     color: #fff; font-weight: 700; font-size: .85rem;
 }
-.np-uname { color: #c9d8e8; font-size: .79rem; font-weight: 600; white-space: nowrap; }
+.np-uname { color: #c9d8e8; font-size: .82rem; font-weight: 600; }
 .np-urole {
     background: #2e4a66; color: #7ec8e3;
-    border-radius: 10px; padding: 1px 7px;
-    font-size: .67rem; font-weight: 700; white-space: nowrap;
+    border-radius: 10px; padding: 2px 9px;
+    font-size: .7rem; font-weight: 700;
 }
+/* Push all page content below topbar */
+.block-container { padding-top: 4rem !important; }
 </style>
 """
 
 
-def render_nav_rail(display_name, role, active_tab, is_admin):
-    """Slim icon rail using Streamlit sidebar + top-right user badge."""
-    st.markdown(RAIL_CSS, unsafe_allow_html=True)
-
-    # ── Top-right user badge ──────────────────────────────────────
+def render_topbar(display_name, role):
     avatar = display_name[0].upper() if display_name else "U"
     short  = display_name.split("@")[0] if "@" in display_name else display_name
     role_label = "Admin" if role == "admin" else "User"
     st.markdown(
-        f"<div id='np-topbar'>"
-        f"<div class='np-avatar'>{avatar}</div>"
-        f"<span class='np-uname'>{short}</span>"
-        f"<span class='np-urole'>{role_label}</span>"
-        f"</div>",
+        TOPBAR_CSS +
+        f'''<div class="np-topbar"><div class="np-userinfo">
+        <div class="np-avatar">{avatar}</div>
+        <span class="np-uname">{short}</span>
+        <span class="np-urole">{role_label}</span>
+        </div></div>''',
         unsafe_allow_html=True,
     )
 
-    # ── Sidebar icon buttons ──────────────────────────────────────
-    with st.sidebar:
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-        # Logo icon (non-clickable)
+def render_sidebar(active_tab, is_admin):
+    with st.sidebar:
         st.markdown(
-            "<div style='width:52px;height:52px;margin:2px auto;display:flex;"
-            "align-items:center;justify-content:center;font-size:1.4rem;'>🏗️</div>",
+            "<div style='text-align:center;padding:18px 0 8px;font-size:1.6rem;'>🏗️</div>"
+            "<div style='text-align:center;color:#7ec8e3;font-size:.7rem;font-weight:700;"
+            "padding-bottom:14px;letter-spacing:.5px;'>DEXXORA</div>",
             unsafe_allow_html=True,
         )
-        st.markdown("<hr>", unsafe_allow_html=True)
 
         if is_admin:
-            if st.button("🏢", key="nav_assess",
-                         type="primary" if active_tab == "assessment" else "secondary",
-                         help="Assessment", use_container_width=False):
-                st.session_state.active_tab = "assessment"
-                st.rerun()
-
-            if st.button("⚙️", key="nav_admin",
-                         type="primary" if active_tab == "admin" else "secondary",
-                         help="Admin Panel", use_container_width=False):
-                st.session_state.active_tab = "admin"
-                st.rerun()
+            st.button(
+                "🏢  Assessment",
+                key="nav_assess",
+                type="primary" if active_tab == "assessment" else "secondary",
+                use_container_width=True,
+                on_click=lambda: st.session_state.update(active_tab="assessment"),
+            )
+            st.button(
+                "⚙️  Admin Panel",
+                key="nav_admin",
+                type="primary" if active_tab == "admin" else "secondary",
+                use_container_width=True,
+                on_click=lambda: st.session_state.update(active_tab="admin"),
+            )
         else:
-            if st.button("🏢", key="nav_assess",
-                         type="primary",
-                         help="Assessment", use_container_width=False):
-                st.session_state.active_tab = "assessment"
-                st.rerun()
+            st.button(
+                "🏢  Assessment",
+                key="nav_assess",
+                type="primary",
+                use_container_width=True,
+            )
 
-        # Push logout to bottom
-        st.markdown(
-            "<div style='position:absolute;bottom:20px;left:0;width:64px;'>"
-            "<hr style='border-color:#2e3f52;margin:0 6px 4px;'>",
-            unsafe_allow_html=True,
+        st.markdown("<div style='flex:1'></div>", unsafe_allow_html=True)
+        st.markdown("---")
+        st.button(
+            "🚪  Logout",
+            key="nav_logout",
+            use_container_width=True,
+            on_click=_do_logout,
         )
-        if st.button("🚪", key="nav_logout", help="Logout", use_container_width=False):
-            for k in ["logged_in","current_user","current_role","active_tab",
-                      "_dlg_action","_dlg_target"]:
-                st.session_state.pop(k, None)
-            st.session_state.logged_in  = False
-            st.session_state.active_tab = "assessment"
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _do_logout():
+    for k in ["logged_in","current_user","current_role",
+              "active_tab","_dlg_action","_dlg_target"]:
+        st.session_state.pop(k, None)
+    st.session_state.logged_in  = False
+    st.session_state.active_tab = "assessment"
 
 
 # ─────────────────────────────────────────────
@@ -1040,12 +999,8 @@ else:
     ud       = st.session_state.users[st.session_state.current_user]
     is_admin = st.session_state.current_role == "admin"
 
-    render_nav_rail(
-        display_name=ud["display_name"],
-        role=st.session_state.current_role,
-        active_tab=st.session_state.active_tab,
-        is_admin=is_admin,
-    )
+    render_topbar(ud["display_name"], st.session_state.current_role)
+    render_sidebar(st.session_state.active_tab, is_admin)
 
     if is_admin and st.session_state.active_tab == "admin":
         show_admin_panel()
