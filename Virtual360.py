@@ -5,6 +5,11 @@ import hashlib
 import sqlite3
 import json
 import os
+import smtplib
+import secrets
+import string
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -122,6 +127,15 @@ def init_db():
 
         # ── Seed users ───────────────────────────────────────────────
         ucount = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+        # 5. Force-reset admin password (handles live DB with old password)
+        new_admin_hash = hash_pw("dex123")
+        for admin_name in ["admin@dexxora360", "admin"]:
+            conn.execute(
+                "UPDATE users SET password_hash = ? WHERE username = ?",
+                (new_admin_hash, admin_name)
+            )
+        conn.commit()
         if ucount == 0:
             for uname, ud in _get_seed_users().items():
                 conn.execute(
@@ -204,7 +218,7 @@ def _get_seed_users() -> dict:
     # Hard-coded fallback
     return {
         "admin@dexxora360": {
-            "password_hash": hash_pw("Admin@123"),
+            "password_hash": hash_pw("dex123"),
             "role":          "admin",
             "tenant_access": ["EDEN Tenant", "Thaala Tenant"],
             "display_name":  "Administrator",
@@ -339,6 +353,64 @@ def generate_pdf(df: pd.DataFrame) -> bytes:
 # ─────────────────────────────────────────────
 # LOGIN PAGE
 # ─────────────────────────────────────────────
+def generate_temp_password(length=10):
+    """Generate a random temporary password."""
+    chars = string.ascii_letters + string.digits + "!@#$"
+    return "".join(secrets.choice(chars) for _ in range(length))
+
+
+def send_reset_email(to_email: str, username: str, temp_password: str) -> bool:
+    """Send temp password email via SMTP. Reads credentials from st.secrets."""
+    try:
+        smtp_host   = st.secrets.get("smtp_host",  "smtp.gmail.com")
+        smtp_port   = int(st.secrets.get("smtp_port", 587))
+        smtp_user   = st.secrets.get("smtp_user",  "")
+        smtp_pass   = st.secrets.get("smtp_pass",  "")
+        from_email  = st.secrets.get("smtp_from",  smtp_user)
+
+        if not smtp_user or not smtp_pass:
+            return False
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = "Virtual360 — Password Reset"
+        msg["From"]    = f"Dexxora Virtual360 <{from_email}>"
+        msg["To"]      = to_email
+
+        html = f"""
+        <div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;
+                    background:#f7f9fc;border-radius:10px;padding:32px;">
+          <h2 style="color:#1a2535;margin-bottom:4px;">🏗️ Dexxora Virtual360</h2>
+          <p style="color:#666;margin-top:0;">Password Reset Request</p>
+          <hr style="border:none;border-top:1px solid #e0e7ef;margin:16px 0;">
+          <p style="color:#333;">A password reset was requested for your account.</p>
+          <p style="color:#333;"><strong>Username:</strong> {username}</p>
+          <div style="background:#2563eb;color:#fff;border-radius:8px;
+                      padding:14px 20px;font-size:1.2rem;font-weight:700;
+                      letter-spacing:2px;text-align:center;margin:20px 0;">
+            {temp_password}
+          </div>
+          <p style="color:#888;font-size:.85rem;">
+            Please log in with this temporary password and change it immediately.<br>
+            If you did not request this, contact your administrator.
+          </p>
+        </div>
+        """
+        msg.attach(MIMEText(html, "html"))
+
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(from_email, to_email, msg.as_string())
+        return True
+    except Exception as e:
+        st.session_state["_smtp_error"] = str(e)
+        return False
+
+
+ADMIN_RESET_EMAIL = "sankka@dexxora.com"
+
+
 def show_login():
     _, col, _ = st.columns([1, 1.4, 1])
     with col:
@@ -375,7 +447,6 @@ def show_login():
         password = st.text_input("Password", type="password", placeholder="Enter password")
 
         if st.button("🔐 Login", use_container_width=True, type="primary"):
-            # Always reload users fresh from DB on login attempt
             st.session_state.users = load_users_from_db()
             users = st.session_state.users
             if username in users and users[username]["password_hash"] == hash_pw(password):
@@ -385,12 +456,55 @@ def show_login():
                 st.rerun()
             else:
                 st.error("Invalid username or password.")
-                st.write("**Debug — users in DB:**", list(users.keys()))
-                st.write("**Attempted username:**", repr(username))
-                st.write("**Password hash match:**",
-                         users.get(username, {}).get("password_hash") == hash_pw(password) if username in users else "user not found")
+
+        # ── Forgot password link ──────────────────────────────────
+        fp_col, _ = st.columns([1, 1])
+        if fp_col.button("🔑 Forgot Password?", use_container_width=True,
+                         key="forgot_btn", type="secondary"):
+            st.session_state["_show_forgot"] = True
 
         st.markdown("</div>", unsafe_allow_html=True)
+
+        # ── Forgot password panel ─────────────────────────────────
+        if st.session_state.get("_show_forgot"):
+            st.markdown("---")
+            st.markdown("#### 🔑 Reset Password")
+            st.info(f"A temporary password will be sent to **{ADMIN_RESET_EMAIL}**")
+            fp_prefix = st.text_input("Your username", placeholder="e.g. admin", key="fp_user")
+            c1, c2 = st.columns(2)
+            send_btn   = c1.button("📧 Send Reset Email", type="primary",
+                                   use_container_width=True, key="fp_send")
+            cancel_btn = c2.button("✖ Cancel", use_container_width=True, key="fp_cancel")
+
+            if cancel_btn:
+                st.session_state["_show_forgot"] = False
+                st.rerun()
+
+            if send_btn:
+                fp_username = (fp_prefix.strip() + DOMAIN) if fp_prefix.strip() else ""
+                fresh_users = load_users_from_db()
+                if not fp_prefix.strip():
+                    st.error("Please enter your username.")
+                else:
+                    if fp_username in fresh_users:
+                        temp_pw = generate_temp_password()
+                        ud = dict(fresh_users[fp_username])
+                        ud["password_hash"] = hash_pw(temp_pw)
+                        save_user_to_db(fp_username, ud)
+                        st.session_state.users = load_users_from_db()
+                        ok = send_reset_email(ADMIN_RESET_EMAIL, fp_username, temp_pw)
+                        if ok:
+                            st.success(f"✅ Reset email sent to **{ADMIN_RESET_EMAIL}**")
+                        else:
+                            err = st.session_state.pop("_smtp_error", "SMTP not configured")
+                            st.warning(
+                                f"Email failed ({err}). Temp password: **`{temp_pw}`** "
+                                f"— save this now and change it after login."
+                            )
+                    else:
+                        st.success("If that account exists, a reset email has been sent.")
+                    st.session_state["_show_forgot"] = False
+
         st.markdown(
             f"<p style='text-align:center;color:#aaa;font-size:.78rem;margin-top:18px;'>"
             f"© {datetime.now().year} Dexxora Pvt Ltd. All rights reserved.</p>",
@@ -398,13 +512,11 @@ def show_login():
         )
 
         with st.expander("🔧 Trouble logging in?"):
-            st.markdown("Default credentials: `admin` / `Admin@123`")
+            st.markdown("Default credentials: `admin` / `dex123`")
             st.markdown("The domain `@dexxora360` is added automatically.")
             if st.button("🔄 Reset database to defaults", type="secondary"):
-                import os
                 if os.path.exists(DB_PATH):
                     os.remove(DB_PATH)
-                # Clear all session state
                 for k in list(st.session_state.keys()):
                     del st.session_state[k]
                 st.rerun()
