@@ -1143,6 +1143,7 @@ def show_login():
         password = st.text_input("Password", type="password", placeholder="Enter password")
 
         if st.button("🔐 Login", use_container_width=True, type="primary"):
+            gh_pull_db()  # always fetch latest DB before authenticating
             st.session_state.users = load_users_from_db()
             users = st.session_state.users
             if username in users and users[username]["password_hash"] == hash_pw(password):
@@ -1706,11 +1707,8 @@ def render_sidebar(active_tab, is_admin):
 
 
 def _do_logout():
-    for k in ["logged_in","current_user","current_role",
-              "active_tab","_dlg_action","_dlg_target"]:
-        st.session_state.pop(k, None)
-    st.session_state.logged_in  = False
-    st.session_state.active_tab = "assessment"
+    st.session_state.clear()
+    st.session_state.logged_in = False
 
 
 # ─────────────────────────────────────────────
