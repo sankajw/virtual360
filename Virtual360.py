@@ -1239,6 +1239,7 @@ def show_admin_panel():
         if btn_col.button("➕ Add New User", type="primary", use_container_width=True):
             st.session_state._dlg_action = "add"
             st.session_state._dlg_target = None
+            st.rerun()
 
         st.markdown("---")
 
@@ -1266,13 +1267,16 @@ def show_admin_panel():
                 if ab1.button("✏️", key=f"edit_{uname}", help="Edit user"):
                     st.session_state._dlg_action = "edit"
                     st.session_state._dlg_target = uname
+                    st.rerun()
                 if ab2.button("🔑", key=f"pw_{uname}", help="Change password"):
                     st.session_state._dlg_action = "pw"
                     st.session_state._dlg_target = uname
+                    st.rerun()
                 if uname != st.session_state.current_user:
                     if ab3.button("🗑️", key=f"del_{uname}", help="Delete user"):
                         st.session_state._dlg_action = "delete"
                         st.session_state._dlg_target = uname
+                        st.rerun()
 
         action = st.session_state._dlg_action
         target = st.session_state._dlg_target
@@ -1295,9 +1299,11 @@ def show_admin_panel():
         if tb1.button("➕ Add Tenant", type="primary", use_container_width=True):
             st.session_state._tdlg_action = "add"
             st.session_state._tdlg_target = None
+            st.rerun()
         if tb2.button("🗂️ Tenant Types", use_container_width=True):
             st.session_state._tdlg_action = "types"
             st.session_state._tdlg_target = None
+            st.rerun()
 
         st.markdown("---")
 
@@ -1326,9 +1332,11 @@ def show_admin_panel():
                 if ab1.button("✏️", key=f"tedit_{t['name']}", help="Edit tenant"):
                     st.session_state._tdlg_action = "edit"
                     st.session_state._tdlg_target = t["name"]
+                    st.rerun()
                 if ab2.button("🗑️", key=f"tdel_{t['name']}", help="Delete tenant"):
                     st.session_state._tdlg_action = "delete"
                     st.session_state._tdlg_target = t["name"]
+                    st.rerun()
 
         taction = st.session_state._tdlg_action
         ttarget = st.session_state._tdlg_target
@@ -1442,6 +1450,7 @@ def show_assessment():
         if ab1.button("➕ Add Area", type="primary", use_container_width=True):
             st.session_state._adlg_action = "add_area"
             st.session_state._adlg_target = None
+            st.rerun()
 
         if areas:
             pdf_df = pd.DataFrame(areas).rename(columns={
@@ -1486,9 +1495,11 @@ def show_assessment():
                 if rc[4].button("✏️", key=f"area_edit_{area['id']}", help="Edit", use_container_width=True):
                     st.session_state._adlg_action = "edit_area"
                     st.session_state._adlg_target = area["id"]
+                    st.rerun()
                 if rc[5].button("🗑️", key=f"area_del_{area['id']}", help="Delete", use_container_width=True):
                     st.session_state._adlg_action = "del_area"
                     st.session_state._adlg_target = area["id"]
+                    st.rerun()
 
             st.markdown("<hr style='margin:4px 0 3px;border-color:#e0e7ef;'>", unsafe_allow_html=True)
             tot = st.columns(AREA_W)
@@ -1514,6 +1525,7 @@ def show_assessment():
     if tb1.button("➕ New Assessment", type="primary", use_container_width=True):
         st.session_state._adlg_action = "new_assessment"
         st.session_state._adlg_target = None
+        st.rerun()
 
     if is_admin:
         assessments = load_assessments()
@@ -1576,9 +1588,11 @@ def show_assessment():
             if edit_col.button("✏️", key=f"aedit_{a['id']}", help="Edit", use_container_width=True):
                 st.session_state._adlg_action = "edit_assessment"
                 st.session_state._adlg_target = a["id"]
+                st.rerun()
             if del_col.button("🗑️", key=f"adel_{a['id']}", help="Delete", use_container_width=True):
                 st.session_state._adlg_action = "delete_assessment"
                 st.session_state._adlg_target = a["id"]
+                st.rerun()
 
             st.markdown("<div style='height:2px;'></div>", unsafe_allow_html=True)
 
