@@ -853,9 +853,15 @@ def dlg_delete_user(username):
 @st.dialog("➕ Add New Tenant", width="large")
 def dlg_add_tenant():
     live_types = load_tenant_types_from_db()
-    with st.form("dlg_add_tenant", clear_on_submit=True):
+    if not live_types:
+        st.error("No tenant types defined. Click **🗂️ Tenant Types** first to add at least one type.")
+        if st.button("✖ Close", key="dlg_add_tenant_notype_close", use_container_width=True):
+            st.session_state._tdlg_action = None
+            st.rerun()
+        return
+    with st.form("dlg_add_tenant", clear_on_submit=False):
         tn = st.text_input("Tenant Name", placeholder="e.g. Marina Bay Tower")
-        tt = st.selectbox("Tenant Type", live_types if live_types else ["(no types defined)"])
+        tt = st.selectbox("Tenant Type", live_types)
         add = st.form_submit_button("✅ Add Tenant", use_container_width=True, type="primary")
     if st.button("✖ Cancel", key="dlg_add_tenant_cancel", use_container_width=True):
         st.session_state._tdlg_action = None
@@ -866,9 +872,7 @@ def dlg_add_tenant():
         if not name:
             st.error("Tenant name cannot be empty.")
         elif name in get_tenant_names():
-            st.error("Tenant already exists.")
-        elif not live_types:
-            st.error("Add at least one Tenant Type first.")
+            st.error(f"Tenant **{name}** already exists.")
         else:
             add_tenant_to_db(name, tt)
             st.session_state.tenants      = load_tenants_from_db()
