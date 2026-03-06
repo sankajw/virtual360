@@ -55,6 +55,46 @@ LOGO_ICON_HTML = f'<img src="data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4
 
 
 # ─────────────────────────────────────────────────────────────────
+# HELPERS  (must be defined before DB layer)
+# ─────────────────────────────────────────────────────────────────
+
+def hash_pw(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+def _get_seed_users() -> dict:
+    """Return default seed users (admin + one regular user)."""
+    try:
+        raw = st.secrets.get("users", {})
+        if raw:
+            return {
+                uname: {
+                    "display_name":  ud.get("display_name", uname),
+                    "role":          ud.get("role", "user"),
+                    "tenant_access": list(ud.get("tenant_access", [])),
+                    "password_hash": ud.get("password_hash", hash_pw("changeme")),
+                }
+                for uname, ud in raw.items()
+            }
+    except Exception:
+        pass
+    return {
+        "admin@dexxora360": {
+            "display_name":  "Administrator",
+            "role":          "admin",
+            "tenant_access": ["EDEN Tenant", "Thaala Tenant"],
+            "password_hash": hash_pw("dex123"),
+        },
+        "user@dexxora360": {
+            "display_name":  "Demo User",
+            "role":          "user",
+            "tenant_access": ["EDEN Tenant"],
+            "password_hash": hash_pw("dex123"),
+        },
+    }
+
+
+# ─────────────────────────────────────────────────────────────────
 # DATABASE LAYER  — SQLite + GitHub persistence
 # ─────────────────────────────────────────────────────────────────
 #
